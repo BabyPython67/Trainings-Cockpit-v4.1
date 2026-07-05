@@ -2433,17 +2433,23 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
 }
 
 /* ===================== APP ===================== */
+// Oberste Ebene: Bereiche. Training bündelt die bekannten Tabs; Schule ist ein eigener Bereich.
+const AREAS = [
+  { id: "training", label: "Training", icon: Dumbbell },
+  { id: "schule", label: "Schule", icon: GraduationCap },
+];
+// Unter-Tabs des Trainings-Bereichs (unverändert, Cockpit ist Start)
 const TABS = [
   { id: "cockpit", label: "Cockpit", icon: Gauge },
   { id: "woche", label: "Woche", icon: CalendarDays },
   { id: "kcal", label: "Kcal", icon: Utensils },
   { id: "fortschritt", label: "Fortschritt", icon: TrendingUp },
   { id: "recovery", label: "Recovery", icon: Moon },
-  { id: "schule", label: "Schule", icon: GraduationCap },
 ];
 
 export default function App() {
   const [data, setData, loaded, savedAt] = usePersistentData();
+  const [area, setArea] = useState("training");
   const [tab, setTab] = useState("cockpit");
   const [showSettings, setShowSettings] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -2582,18 +2588,32 @@ export default function App() {
           </div>
         </header>
 
-        {/* Tabs */}
-        <nav className="sticky top-0 z-20 bg-slate-50/90 px-4 pb-2 backdrop-blur border-b border-slate-200/70">
-          <div className="flex gap-1 rounded-2xl bg-white border border-slate-200 p-1 shadow-sm">
-            {TABS.map((t) => {
-              const Icon = t.icon, active = tab === t.id && !showSettings;
+        {/* Navigation: oben Bereiche (Training/Schule), darunter nur im Training die Unter-Tabs */}
+        <nav className="sticky top-0 z-20 bg-slate-50/90 px-4 pb-2 backdrop-blur border-b border-slate-200/70 space-y-2">
+          {/* Oberste Ebene: segmentierte Bereichs-Umschaltung (bewusst anders als die Indigo-Tabs darunter) */}
+          <div className="flex gap-1 rounded-2xl bg-slate-100 p-1">
+            {AREAS.map((a) => {
+              const Icon = a.icon, active = area === a.id && !showSettings;
               return (
-                <button key={t.id} onClick={() => { setTab(t.id); setShowSettings(false); }} className={`flex-1 flex flex-col items-center gap-0.5 rounded-xl py-2.5 transition ${active ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
-                  <Icon size={17} /><span className="text-[10px] font-semibold">{t.label}</span>
+                <button key={a.id} onClick={() => { setArea(a.id); setShowSettings(false); }} className={`flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2 transition ${active ? "bg-white shadow-sm text-indigo-700" : "text-slate-500"}`}>
+                  <Icon size={16} /><span className="text-xs font-bold">{a.label}</span>
                 </button>
               );
             })}
           </div>
+          {/* Zweite Ebene: Trainings-Tabs, nur sichtbar wenn Bereich = Training */}
+          {area === "training" && (
+            <div className="flex gap-1 rounded-2xl bg-white border border-slate-200 p-1 shadow-sm">
+              {TABS.map((t) => {
+                const Icon = t.icon, active = tab === t.id && !showSettings;
+                return (
+                  <button key={t.id} onClick={() => { setTab(t.id); setShowSettings(false); }} className={`flex-1 flex flex-col items-center gap-0.5 rounded-xl py-2.5 transition ${active ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
+                    <Icon size={17} /><span className="text-[10px] font-semibold">{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </nav>
 
         <main className="px-4 py-4">
@@ -2601,19 +2621,20 @@ export default function App() {
             <div className="py-20 text-center text-sm text-slate-400">Lade …</div>
           ) : showSettings ? (
             <SettingsView data={data} setData={setData} savedAt={savedAt} onRefresh={manualRefresh} refreshing={refreshing} onReset={reset} onClose={() => setShowSettings(false)} />
+          ) : area === "schule" ? (
+            <SchoolTab data={data} setData={setData} />
           ) : (
             <>
-              {tab === "cockpit" && <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} goWeek={() => setTab("woche")} goRecovery={() => setTab("recovery")} goKcal={() => setTab("kcal")} goSchule={() => setTab("schule")} tournamentPassed={tournamentPassed} />}
+              {tab === "cockpit" && <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} goWeek={() => setTab("woche")} goRecovery={() => setTab("recovery")} goKcal={() => setTab("kcal")} goSchule={() => { setArea("schule"); setShowSettings(false); }} tournamentPassed={tournamentPassed} />}
               {tab === "woche" && <WeekTab data={data} setData={setData} currentWeek={currentWeek} tournamentPassed={tournamentPassed} />}
               {tab === "fortschritt" && <ProgressTab data={data} setData={setData} currentWeek={currentWeek} />}
               {tab === "kcal" && <NutritionTab data={data} setData={setData} plan={plan} />}
               {tab === "recovery" && <RecoveryTab data={data} setData={setData} currentWeek={currentWeek} />}
-              {tab === "schule" && <SchoolTab data={data} setData={setData} />}
             </>
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v4.0` : "Fortschritt wird automatisch gespeichert · v4.0"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v4.1` : "Fortschritt wird automatisch gespeichert · v4.1"}</span>
           </footer>
         </main>
       </div>
