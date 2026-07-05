@@ -1,0 +1,2617 @@
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import {
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, ReferenceLine, Cell, ComposedChart, LabelList,
+} from "recharts";
+import Papa from "papaparse";
+import {
+  Gauge, CalendarDays, TrendingUp, Moon, Dumbbell, Footprints,
+  Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
+  Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
+  HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
+  GraduationCap,
+} from "lucide-react";
+
+/* ===================== Sport-Farben ===================== */
+const SPORT = {
+  run:      { label: "Laufen",     color: "#6366f1", tint: "#eef2ff", deep: "#4338ca", bright: "#a5b4fc" },
+  vb:       { label: "Volleyball", color: "#f59e0b", tint: "#fff7ed", deep: "#b45309", bright: "#fbbf24" },
+  strength: { label: "Kraft",      color: "#059669", tint: "#ecfdf5", deep: "#047857", bright: "#34d399" },
+  rest:     { label: "Ruhe",       color: "#94a3b8", tint: "#f1f5f9", deep: "#475569", bright: "#94a3b8" },
+};
+
+/* ===================== Theme (Hell/Dunkel) ===================== */
+const ThemeContext = React.createContext(false);
+const useDark = () => React.useContext(ThemeContext);
+const gridCol = (dark) => (dark ? "#22304a" : "#f1f5f9");
+const tipStyle = (dark, fontSize = 12) => (dark
+  ? { fontSize, borderRadius: 10, background: "#16202f", border: "1px solid #2b3950", color: "#e2e8f0", maxWidth: 220, whiteSpace: "normal" }
+  : { fontSize, borderRadius: 10, maxWidth: 220, whiteSpace: "normal" });
+// Jeder <Tooltip> MUSS itemStyle/labelStyle explizit setzen — sonst greift Recharts' interne
+// Default-Textfarbe (an keine Theme gebunden) und der Text wird im Dark Mode unlesbar.
+// Deshalb: nie contentStyle={tipStyle(dark)} allein verwenden, sondern immer {...tipProps(dark)}.
+const tipProps = (dark, fontSize = 12) => ({
+  contentStyle: tipStyle(dark, fontSize),
+  itemStyle: { color: dark ? "#e2e8f0" : "#0f172a" },
+  labelStyle: { color: dark ? "#f8fafc" : "#0f172a", fontWeight: 700, marginBottom: 3 },
+});
+// Hex → HSL → Hex, um im Dark Mode JEDE hartcodierte Textfarbe automatisch hell genug zu machen —
+// unabhängig davon, welcher Ton irgendwo im Code verwendet wird. Verhindert diese Bugklasse dauerhaft.
+function hexToHsl(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255, b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b); let h = 0, s = 0; const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min; s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0); else if (max === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+    h /= 6;
+  }
+  return [h * 360, s * 100, l * 100];
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const toHex = (x) => Math.round(255 * x).toString(16).padStart(2, "0");
+  return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+}
+function safeText(dark, hex) {
+  if (!dark || !hex || hex[0] !== "#") return hex;
+  try { const [h, s, l] = hexToHsl(hex); return hslToHex(h, Math.min(Math.max(s, 40), 85), Math.max(l, 72)); } catch (_) { return hex; }
+}
+// Getönte Info-Panels: hell = Pastell, dunkel = transluzenter Akzent auf dunklem Grund
+const panel = (dark, accent, lightBg, lightBorder) => (dark
+  ? { background: accent + "21", borderColor: accent + "59" }
+  : { background: lightBg, borderColor: lightBorder });
+const softBg = (dark, accent, lightHex) => (dark ? accent + "26" : lightHex);
+// Referenzlinien-Beschriftung mit eigenem Hintergrund: bleibt lesbar unabhängig davon, ob sie über
+// einem farbigen Balken, dem Gitter oder Freifläche landet — behebt das Kontrastproblem strukturell,
+// statt sich auf Zeichenreihenfolge oder Zufalls-Kontrast mit dem Untergrund zu verlassen.
+// bias "above"/"below" hält zwei Labels auf derselben Chart auch bei nah beieinanderliegenden Werten auseinander.
+function chipLabel(text, color, dark, bias = "above") {
+  return (props) => {
+    const { viewBox } = props;
+    if (!viewBox) return null;
+    const fontSize = 9, padX = 5, h = 13;
+    const w = Math.round(text.length * 5.4 + padX * 2);
+    const x = bias === "vtop" ? Math.max(2, viewBox.x - w / 2) : viewBox.x + viewBox.width - w - 3;
+    const y = bias === "above" ? viewBox.y - h - 3 : bias === "below" ? viewBox.y + 3 : bias === "vtop" ? viewBox.y - h - 2 : viewBox.y - h / 2;
+    return (
+      <g>
+        <rect x={x} y={y} width={w} height={h} rx={4} fill={dark ? "#16202f" : "#ffffff"} stroke={dark ? "#2b3950" : "#e2e8f0"} strokeWidth={0.75} />
+        <text x={x + w / 2} y={y + h - 4} textAnchor="middle" fontSize={fontSize} fontWeight={600} fill={safeText(dark, color)}>{text}</text>
+      </g>
+    );
+  };
+}
+function VolleyballIcon({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2c3.2 3.6 3.2 16.4 0 20" />
+      <path d="M4.6 6.2c5 2.2 9.8 2.2 14.8 0" />
+      <path d="M4.6 17.8c5-2.2 9.8-2.2 14.8 0" />
+    </svg>
+  );
+}
+function SportGlyph({ sport, size = 16, color }) {
+  const dark = useDark();
+  const c = color || (dark ? SPORT[sport]?.bright : SPORT[sport]?.deep) || "#475569";
+  if (sport === "run") return <Footprints size={size} color={c} />;
+  if (sport === "strength") return <Dumbbell size={size} color={c} />;
+  if (sport === "vb") return <VolleyballIcon size={size} color={c} />;
+  return <Moon size={size} color={c} />;
+}
+
+/* ===================== Datum / Plan ===================== */
+const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const DAY_FULL = { Mo: "Montag", Di: "Dienstag", Mi: "Mittwoch", Do: "Donnerstag", Fr: "Freitag", Sa: "Samstag", So: "Sonntag" };
+const DAY_MS = 86400000;
+const atMidnight = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const PLAN_START = atMidnight(new Date(2026, 5, 29)); // Mo 29.06.2026
+const TOURNAMENT = atMidnight(new Date(2026, 6, 15)); // Mi 15.07.2026
+const TOTAL_WEEKS = 16;
+
+function mondayOf(d) { const x = atMidnight(d); return new Date(x.getTime() - ((x.getDay() + 6) % 7) * DAY_MS); }
+function planWeekOf(d) { const idx = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)); return Math.min(TOTAL_WEEKS, Math.max(1, idx + 1)); }
+const mondayOfWeek = (w) => new Date(PLAN_START.getTime() + (w - 1) * 7 * DAY_MS);
+const TEST_DATE = new Date(mondayOfWeek(TOTAL_WEEKS).getTime() + 2 * DAY_MS); // Mi der Woche 16
+const fmtDM = (d) => d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+const isSameDay = (a, b) => atMidnight(a).getTime() === atMidnight(b).getTime();
+
+const REG = {
+  "1-3":  { easy: ["30 Min", "locker, konversationstauglich", "130–138"], int: ["5×800 m", "@ 4:35/km · 2 Min Pause", "180–188"], tempo: ["18–20 Min", "@ 5:15/km", "162–172"], long: ["45–50 Min", "sehr locker", "140–155"] },
+  "5-7":  { easy: ["32–35 Min", "sehr locker halten", "130–140"], int: ["5×1000 m", "@ 4:35/km · 2,5 Min Pause", "180–188"], tempo: ["22–25 Min", "@ 5:12/km", "162–174"], long: ["50–55 Min", "Grundlage", "140–155"] },
+  "9-11": { easy: ["35 Min", "Erholung ermöglichen", "130–140"], int: ["4×1200 m", "@ 4:40/km · 2,5 Min Pause", "180–188"], tempo: ["25–28 Min", "@ 5:10/km", "163–175"], long: ["55–60 Min", "Umfang ist der Reiz", "140–155"] },
+  "13-15":{ easy: ["35 Min", "Grundlage erhalten", "130–140"], int: ["3×1500 m", "@ 4:40/km · 3 Min Pause", "180–188"], tempo: ["28–30 Min", "@ 5:05/km", "163–175"], long: ["60 Min", "locker", "140–155"] },
+};
+const REGEN = {
+  4:  { Mo: ["21–24 Min", "sehr locker, erholen", "125–135"], Mi: ["20–22 Min", "lockerer Lauf", "125–135"], Sa: ["30–32 Min", "Grundlage, sehr locker", "130–140"] },
+  8:  { Mo: ["22–24 Min", "sehr locker, erholen", "130–140"], Mi: ["21–23 Min", "lockerer Lauf", "130–140"], Sa: ["35–38 Min", "Grundlage, sehr locker", "135–145"] },
+  12: { Mo: ["24–25 Min", "sehr locker, erholen", "130–140"], Mi: ["23–24 Min", "lockerer Lauf", "130–140"], Sa: ["38–42 Min", "Grundlage, sehr locker", "135–145"] },
+};
+const RUN_TYPE = { easy: { label: "Easy", load: 3 }, int: { label: "Intervalle", load: 7 }, tempo: { label: "Tempo", load: 6 }, long: { label: "Langer Lauf", load: 6 }, test: { label: "5 km Test", load: 9 } };
+
+function getRunWeek(week) {
+  if (week >= TOTAL_WEEKS) return { Mi: { type: "test", dur: "5 km", desc: "2 Tage Ruhe davor · Bestleistung", hr: "bis 196" } };
+  if (REGEN[week]) { const r = REGEN[week]; return { Mo: { type: "easy", dur: r.Mo[0], desc: r.Mo[1], hr: r.Mo[2] }, Mi: { type: "easy", dur: r.Mi[0], desc: r.Mi[1], hr: r.Mi[2] }, Sa: { type: "long", dur: r.Sa[0], desc: r.Sa[1], hr: r.Sa[2] } }; }
+  let key = "1-3";
+  if (week >= 5 && week <= 7) key = "5-7"; else if (week >= 9 && week <= 11) key = "9-11"; else if (week >= 13 && week <= 15) key = "13-15";
+  const b = REG[key];
+  return {
+    Mo: { type: "easy", dur: b.easy[0], desc: b.easy[1], hr: b.easy[2] },
+    Di: { type: "int", dur: b.int[0], desc: b.int[1], hr: b.int[2] },
+    Do: { type: "tempo", dur: b.tempo[0], desc: b.tempo[1], hr: b.tempo[2] },
+    Sa: { type: "long", dur: b.long[0], desc: b.long[1], hr: b.long[2] },
+  };
+}
+function targetPaceSec(type, week) {
+  if (type === "int") return week >= 9 ? 280 : 275;
+  if (type === "tempo") { if (week <= 3) return 315; if (week <= 7) return 312; if (week <= 11) return 310; return 305; }
+  return null;
+}
+
+const STRENGTH = {
+  upper: { title: "Oberkörper & Rumpf", sub: "Schulterschutz + Stabilität · Beine bleiben frisch", load: 3, ex: ["Schulter-Außenrotation (Band) – 2×15", "Bankdrücken / Schrägbank – 3×6–8", "Rudern (Kabel/LH) – 3×8–10", "Schulterdrücken (KH) – 3×8", "Pallof Press (Anti-Rotation) – 3×10/Seite", "Plank-Varianten – 3×30–45 s"] },
+  lower: { title: "Unterkörper & Power", sub: "Sprungkraft & Beinkraft — liegt bewusst in der Lauf-Regenerationswoche", load: 5, ex: ["Kniebeuge – 4×5–6", "Rumänisches Kreuzheben – 3×6–8", "Bulgarian Split Squat – 3×8/Bein", "Box Jumps (explosiv) – 4×4", "Wadenheben – 3×12", "Hanging Leg Raises – 3×10"] },
+  push:  { title: "Oberkörper (Aufbau)", sub: "Zug/Druck + Schulter-Prehab", load: 4, ex: ["Bankdrücken – 4×6", "Klimmzüge / Latzug – 4×6–8", "Schulterdrücken – 3×8", "Rudern – 3×10", "Rotatorenmanschette – 2×15", "Anti-Rotation Core – 3×12"] },
+  mobility: { title: "Leichte Mobility", sub: "locker, kein Beinversagen vor dem Turnier", load: 1, ex: ["Hüftöffner", "Schulterkreisen mit Band", "Core-Aktivierung", "Lockeres Auslaufen"] },
+};
+const DEFAULT_VB_SLOTS = [{ day: "Mi", time: "19:00" }, { day: "Fr", time: "17:00" }];
+function vbMap(slots) {
+  const m = {};
+  (slots && slots.length ? slots : DEFAULT_VB_SLOTS).forEach((s) => { if (s && s.day && s.time) m[s.day] = { time: s.time, label: "Volleyball-Training", note: "Verein" }; });
+  return m;
+}
+const PHASE = {
+  1: { name: "Phase 1 — Turniervorbereitung", short: "Turnier-Fokus", desc: "Volleyball-Frische priorisieren. Lauf- & Kraftplan laufen weiter, aber kurz vor dem Turnier die Spitze rausnehmen. Kraft nur leicht (Oberkörper/Rumpf), damit die Beine fürs Springen frisch bleiben.", strength: { Mo: "upper" } },
+  2: { name: "Phase 2 — Aufbau (Sommerferien)", short: "Aufbau", desc: "Voller 3-Sport-Aufbau. Reguläre Wochen: 2× Oberkörper — die Beine bekommen ihren Reiz schon durch Intervalle, Tempo und Volleyball. Die schwere Bein-/Power-Einheit liegt in den Lauf-Regenerationswochen, wenn die Beine frei sind.", strength: { Mo: "push", Do: "upper" } },
+};
+// Phase 2 in Lauf-Regenerationswochen: schwere Beine am Di (kein Lauf, nur lockeres VB am Mi)
+const PHASE2_REGEN_STRENGTH = { Di: "lower" };
+
+function weekMeta(week) {
+  const monday = mondayOfWeek(week);
+  const sunday = new Date(monday.getTime() + 6 * DAY_MS);
+  const hasT = TOURNAMENT >= monday && TOURNAMENT <= sunday;
+  const phase = monday > TOURNAMENT ? 2 : 1;
+  const tDay = hasT ? DAYS[Math.round((TOURNAMENT - monday) / DAY_MS)] : null;
+  return { monday, sunday, hasT, phase, tDay };
+}
+function buildWeekPlan(week, phaseOverride, vbSlots) {
+  const runs = getRunWeek(week);
+  const { hasT, phase: autoPhase, tDay } = weekMeta(week);
+  const phaseNum = phaseOverride || autoPhase;
+  const ph = PHASE[phaseNum];
+  const isTestWeek = week >= TOTAL_WEEKS;
+  const strengthMap = isTestWeek ? {} : (phaseNum === 2 && REGEN[week]) ? PHASE2_REGEN_STRENGTH : ph.strength;
+  const VB = vbMap(vbSlots);
+  const mkuid = (day, kind) => `w${week}-${day}-${kind}`; // stabil: hängt nicht an der Position im Tages-Array
+
+  return DAYS.map((day) => {
+    const items = [];
+
+    // Testwoche: Mo & Di sind echte Ruhetage vor dem 5-km-Test
+    if (isTestWeek && (day === "Mo" || day === "Di")) {
+      items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag vor dem Test", dur: "Erholung", desc: "Beine frisch für Mittwoch — höchstens Spaziergang/Dehnen", load: 0 });
+      return { day, items, load: 0 };
+    }
+
+    if (runs[day]) {
+      const r = runs[day];
+      let run = { sport: "run", ...r, label: RUN_TYPE[r.type].label, load: RUN_TYPE[r.type].load };
+      if (hasT && day === "Di" && r.type === "int") run = { sport: "run", type: "easy", label: "Shakeout (Taper)", dur: "15–20 Min", desc: "locker + 3–4 Steigerungen · Intervalle entfallen", hr: "130–145", load: 2, taper: true };
+      if (hasT && day === "Mo") run = { ...run, desc: run.desc + " · kurz halten, Beine frisch", taper: true };
+      items.push({ uid: mkuid(day, "run"), ...run });
+    }
+    const sk = strengthMap[day];
+    if (sk) {
+      if (hasT && (day === "Mo" || day === "Di")) {
+        if (day === "Mo") { const m = STRENGTH.mobility; items.push({ uid: mkuid(day, "str-mobility"), sport: "strength", key: "mobility", label: m.title, dur: "15–20 Min", desc: m.sub, ex: m.ex, load: m.load, taper: true }); }
+      } else { const s = STRENGTH[sk]; items.push({ uid: mkuid(day, `str-${sk}`), sport: "strength", key: sk, label: s.title, dur: "45–60 Min", desc: s.sub, ex: s.ex, load: s.load }); }
+    }
+    if (hasT && day === tDay) items.push({ uid: mkuid(day, "tournament"), sport: "vb", label: "Schulturnier", dur: "Turniertag", desc: "Schule · Bestleistung anstreben", load: 9, tournament: true });
+    else if (VB[day] && !(isTestWeek && day === "Mi")) items.push({ uid: mkuid(day, "vb"), sport: "vb", ...VB[day], load: 6 }); // Testwoche: kein Volleyball am Testtag
+    if (items.length === 0) items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag", dur: "Erholung", desc: day === "So" ? "Aktive Erholung optional: Spaziergang, Dehnen" : "Kein Training geplant", load: 0 });
+    return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
+  });
+}
+const plannedWeekLoad = (week, vbSlots) => buildWeekPlan(week, undefined, vbSlots).reduce((s, d) => s + d.load, 0);
+function weekLoadBySport(week, vbSlots) {
+  const out = { run: 0, vb: 0, strength: 0 };
+  buildWeekPlan(week, undefined, vbSlots).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
+  return out;
+}
+// Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
+function migrateDone(done) {
+  const out = {}; let changed = false; const cache = {};
+  Object.entries(done || {}).forEach(([k, v]) => {
+    const m = k.match(/^(\d+)-(Mo|Di|Mi|Do|Fr|Sa|So)-(\d+)$/);
+    if (!m) { out[k] = v; return; }
+    changed = true;
+    if (!v) return; // nicht gesetzte alte Keys einfach verwerfen
+    const week = Number(m[1]);
+    const plan = cache[week] || (cache[week] = buildWeekPlan(week)); // Standard-Slots: entspricht dem Stand, mit dem die alten Keys entstanden
+    const item = plan.find((d) => d.day === m[2])?.items[Number(m[3])];
+    if (item?.uid) out[item.uid] = true;
+  });
+  return { done: out, changed };
+}
+function dominantSport(items) { let best = items[0], bl = items[0]?.load ?? 0; for (const it of items) if ((it.load || 0) > bl) { best = it; bl = it.load; } return best?.sport || "rest"; }
+
+/* ===================== Zeit-Helfer ===================== */
+function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = String(str).trim(); if (s.includes(":")) { const p = s.split(":").map(Number); if (p.some(isNaN)) return null; if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2]; return p[0] * 60 + p[1]; } const n = Number(s.replace(",", ".")); return isNaN(n) ? null : n; }
+const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const m = Math.floor(sec / 60), s = Math.round(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; };
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+
+/* ===================== Schule: Fristen-Ampel ===================== */
+const SCHOOL_ART = [["hausaufgabe", "Hausaufgabe"], ["klausur", "Klausur"]];
+const daysUntil = (iso) => Math.ceil((new Date(iso + "T00:00:00") - atMidnight(new Date())) / DAY_MS);
+function schoolStatus(item) {
+  if (item.erledigt) return { tone: "go", label: "Erledigt" };
+  const d = daysUntil(item.faelligkeit);
+  if (d < 0) return { tone: "warn", label: `${-d} Tag${-d === 1 ? "" : "e"} überfällig` };
+  if (d === 0) return { tone: "mid", label: "Heute fällig" };
+  if (d <= 3) return { tone: "mid", label: `In ${d} Tag${d === 1 ? "" : "en"}` };
+  return { tone: "rest", label: fmtISOshort(item.faelligkeit) };
+}
+
+/* ===================== Persistenz ===================== */
+const STORAGE_KEY = "trainings-cockpit-v1";
+/* ===================== V3: ERNÄHRUNG — Grundlagen (nur kcal, kein Food-Tracking) ===================== */
+const MEAL_TAGS = ["Frühstück", "Mittag", "Abend", "Snack"];
+const ACTIVITY_LEVELS = [[1.2, "Sitzend", "viel Sitzen, kaum Alltagsbewegung"], [1.35, "Normal", "Schulweg, Treppen, etwas Bewegung"], [1.5, "Aktiv", "viel auf den Beinen — ohne Training"]];
+const NUT_DEFAULT = { setup: false, profile: { sex: "m", age: "18", height: "", weight: "", activity: 1.35, goal: "maintain", rate: 0.5, addBack: 50, goalWeight: "", tdeeManual: null }, intake: [], presets: [], weightLog: [] };
+const parseNum = (v) => Number(String(v ?? "").replace(",", ".")) || 0;
+// Mifflin-St-Jeor: Standard-Grundumsatzformel erfolgreicher Ernährungs-Apps
+function bmrMifflin(p) { const a = parseNum(p.age), h = parseNum(p.height), w = parseNum(p.weight); if (!a || !h || !w) return null; return Math.round(10 * w + 6.25 * h - 5 * a + (p.sex === "w" ? -161 : 5)); }
+// Tagesziel: Alltags-TDEE ± Zielrate (7700 kcal ≈ 1 kg Körpergewicht), mit Gesundheits-Untergrenze
+function kcalPlan(profile) {
+  const bmr = bmrMifflin(profile); if (!bmr) return null;
+  const tdee = Math.round(parseNum(profile.tdeeManual) || bmr * profile.activity);
+  const perDay = Math.round(parseNum(profile.rate) * 7700 / 7);
+  const delta = profile.goal === "cut" ? -perDay : profile.goal === "gain" ? perDay : 0;
+  const floor = Math.max(Math.round(bmr * 1.05), profile.sex === "w" ? 1300 : 1600);
+  let target = tdee + delta;
+  const belowFloor = profile.goal === "cut" && target < floor;
+  if (belowFloor) target = floor;
+  return { bmr, tdee, delta, target, floor, belowFloor, calibrated: !!parseNum(profile.tdeeManual) };
+}
+const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
+const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
+
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [] };
+const hasStorage = typeof window !== "undefined" && window.storage;
+function usePersistentData() {
+  const [data, setData] = useState(DEFAULT_DATA);
+  const [loaded, setLoaded] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (hasStorage) { try {
+        const res = await window.storage.get(STORAGE_KEY, false);
+        if (alive && res?.value) {
+          let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) };
+          const mig = migrateDone(next.done);
+          if (mig.changed) next = { ...next, done: mig.done };
+          setData(next); setSavedAt(new Date());
+        }
+      } catch (_) {} }
+      if (alive) setLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (!loaded || !hasStorage) return;
+    const t = setTimeout(() => { window.storage.set(STORAGE_KEY, JSON.stringify(data), false).then(() => setSavedAt(new Date())).catch(() => {}); }, 250);
+    return () => clearTimeout(t);
+  }, [data, loaded]);
+  return [data, setData, loaded, savedAt];
+}
+// Für geräteunabhängige Übertragung: kompletten Stand als JSON-Sicherung bauen bzw. als Datei anbieten
+function buildBackupPayload(data) {
+  return JSON.stringify({ app: "trainings-cockpit", version: 1, exportedAt: new Date().toISOString(), data }, null, 2);
+}
+function downloadBackup(json) {
+  try {
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `trainings-cockpit-backup-${todayISO()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  } catch (_) { return false; }
+}
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+/* ===================== Bausteine ===================== */
+const Eyebrow = ({ children, color }) => { const dark = useDark(); return <div className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: safeText(dark, color || "#64748b") }}>{children}</div>; };
+const Card = ({ children, className = "", style }) => <div className={`rounded-2xl bg-white border border-slate-200/80 shadow-sm ${className}`} style={style}>{children}</div>;
+function SportChip({ sport, small }) {
+  const dark = useDark();
+  const s = SPORT[sport];
+  return <span className={`inline-flex items-center gap-1.5 rounded-full font-semibold ${small ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs"}`} style={{ background: dark ? s.color + "2b" : s.tint, color: dark ? s.bright : s.deep }}><SportGlyph sport={sport} size={small ? 12 : 14} /> {s.label}</span>;
+}
+const Stat = ({ label, value, unit, accent, icon }) => (
+  <Card className="p-3.5 flex-1 min-w-0">
+    <div className="flex items-center gap-1.5 mb-1">{icon}<span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 truncate">{label}</span></div>
+    <div className="flex items-baseline gap-1"><span className="font-num text-2xl font-bold leading-none" style={{ color: accent || "#0f172a" }}>{value}</span>{unit && <span className="text-xs font-medium text-slate-400">{unit}</span>}</div>
+  </Card>
+);
+/* ==== Belastungspunkte: Erklärung + Tooltip-Inhalt (⚡-System verständlich machen) ==== */
+function LoadHelp() {
+  const [open, setOpen] = useState(false);
+  const rows = [["Volleyball", "6"], ["Turnier / 5K-Test", "9"], ["Laufen Easy", "3"], ["Laufen Tempo / Langer Lauf", "6"], ["Laufen Intervalle", "7"], ["Kraft Mobility", "1"], ["Kraft Oberkörper", "3–4"], ["Kraft Beine / Power", "5"]];
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400">
+        <Info size={11} /> Was bedeutet ⚡?
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-lg bg-slate-100 px-2.5 py-2 text-[10.5px] leading-relaxed text-slate-600">
+          ⚡ sind <b>Belastungspunkte</b>, kein Zeitmaß — eine grobe Einstufung aus Dauer &amp; Intensität je Einheit:
+          <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 font-num">
+            {rows.map(([l, v]) => <React.Fragment key={l}><span>{l}</span><span className="text-right">{v}</span></React.Fragment>)}
+          </div>
+          <div className="mt-1.5 text-slate-500">Die Summe pro Tag/Woche zeigt, wie viel zusammenkommt — nützlich zum Vergleichen, nicht zum Abzählen von Minuten.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+function WeekRhythm({ plan, week, highlightToday }) {
+  const dark = useDark();
+  const monday = mondayOfWeek(week);
+  const data = plan.map((d, i) => {
+    const date = new Date(monday.getTime() + i * DAY_MS);
+    return { day: d.day, load: d.load, dom: dominantSport(d.items), items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
+  });
+  const avg = Math.round((data.reduce((s, d) => s + d.load, 0) / 7) * 10) / 10;
+  return (
+    <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
+      <BarChart data={data} margin={{ top: 20, right: 4, left: 4, bottom: 0 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
+        <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+        <YAxis hide domain={[0, "dataMax + 3"]} />
+        <ReferenceLine y={avg} stroke="#94a3b8" strokeDasharray="3 3" label={chipLabel(`Ø ${avg}`, "#64748b", dark, "above")} />
+        <Tooltip
+          {...tipProps(dark)}
+          wrapperStyle={{ zIndex: 40 }}
+          allowEscapeViewBox={{ x: false, y: true }}
+          cursor={{ fill: dark ? "#ffffff08" : "#00000006" }}
+          labelFormatter={(label, payload) => { const d = payload && payload[0] && payload[0].payload; return d ? DAY_FULL[d.day] : label; }}
+          formatter={(value, name, props) => {
+            const works = (props.payload.items || []).filter((i) => i.load > 0);
+            const text = works.length ? works.map((i) => `${i.label} ⚡${i.load}`).join(" + ") : "Ruhetag";
+            return [works.length > 1 ? `${text} · Gesamt ⚡${value}` : text, "Plan"];
+          }}
+        />
+        <Bar dataKey="load" radius={[4, 4, 0, 0]} maxBarSize={26}>
+          {data.map((d, i) => <Cell key={i} fill={d.load === 0 ? (dark ? "#26334a" : "#e2e8f0") : SPORT[d.dom].color} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}
+          <LabelList dataKey="load" position="top" formatter={(v) => (v > 0 ? `⚡${v}` : "")} style={{ fontSize: 9, fontWeight: 600, fill: dark ? "#94a3b8" : "#64748b" }} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer></div>
+  );
+}
+const LEVEL_META = {
+  none: { label: "Noch keine Daten", color: "#64748b", bright: "#b6c2d1", tint: "#f1f5f9" },
+  red: { label: "Vorsicht — runterfahren", color: "#e11d48", bright: "#fb7185", tint: "#ffe4e6" },
+  yellow: { label: "Solide — beobachten", color: "#d97706", bright: "#fbbf24", tint: "#ffedd5" },
+  green: { label: "Bereit — voll durchstarten", color: "#0d9488", bright: "#5eead4", tint: "#ccfbf1" },
+};
+const LEVEL_ORDER = ["red", "yellow", "green"];
+// Nap "zählt", wenn effektive Minuten (Dauer × Gefühls-Faktor) mind. 15 erreichen —
+// ein groggy-Nap braucht also mehr Rohminuten, um überhaupt als erholsam zu gelten.
+function napEffectiveMin(nap) {
+  if (!nap || !nap.min) return 0;
+  const factor = nap.feeling === "groggy" ? 0.5 : nap.feeling === "erfrischt" ? 1 : 0.85;
+  return nap.min * factor;
+}
+function readinessStatus(weekLoad, avgSleep, readiness, cutFirst, nap) {
+  const cut = cutFirst || "optionale Einheiten";
+  let level;
+  if (!avgSleep && !readiness) level = "none";
+  else if ((avgSleep && avgSleep < 6) || readiness <= 2 || (avgSleep && avgSleep < 7 && weekLoad > 40)) level = "red";
+  else if (avgSleep && avgSleep >= 7.5 && readiness >= 4) level = "green";
+  else level = "yellow";
+
+  // Option C: Nap kann die Ampel um genau eine Stufe anheben (Rot→Gelb oder Gelb→Grün) —
+  // nie zwei Stufen auf einmal, nie aus "Noch keine Daten" heraus. Schlechter Nachtschlaf
+  // bleibt dadurch sichtbar, statt von der Ampel wegrationalisiert zu werden.
+  let napBoost = false;
+  if (level !== "none" && napEffectiveMin(nap) >= 15) {
+    const idx = LEVEL_ORDER.indexOf(level);
+    if (idx >= 0 && idx < LEVEL_ORDER.length - 1) { level = LEVEL_ORDER[idx + 1]; napBoost = true; }
+  }
+
+  const meta = LEVEL_META[level];
+  let hint;
+  if (level === "none") hint = "Trag einen Check-in ein, um deine Bereitschaft zu sehen.";
+  else if (level === "red") hint = `Schlaf/Erholung niedrig. Streiche zuerst ${cut} und halte die harten Tage locker.`;
+  else if (level === "green") hint = napBoost ? "Der Nap hat dich hochgeholt — die Grundlage bleibt dünn, priorisiere trotzdem den Nachtschlaf." : "Gut erholt. Plan wie vorgesehen umsetzen.";
+  else hint = napBoost ? "Okay dank Nap — der Nachtschlaf war knapp, verlass dich langfristig nicht drauf." : "Okay, aber Schlaf im Blick behalten. Bei Müdigkeit Intervalle/Tempo etwas kürzen.";
+
+  return { level, napBoost, ...meta, hint };
+}
+const NAP_TIMES = [["vormittag", "Vormittag"], ["frueh_nachmittag", "Früher Nachmittag"], ["spaet_nachmittag", "Später Nachmittag"]];
+const NAP_FEELINGS = [["erfrischt", "Erfrischt"], ["neutral", "Neutral"], ["groggy", "Groggy"]];
+const napFromEntry = (e) => (e ? { min: e.napMin || 0, time: e.napTime, feeling: e.napFeeling } : null);
+function NapHelp() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400">
+        <Info size={11} /> Wie wirkt sich der Nap aus?
+      </button>
+      {open && (
+        <div className="mt-1.5 rounded-lg bg-slate-100 px-2.5 py-2 text-[10.5px] leading-relaxed text-slate-600">
+          Ab <b>15 effektiven Minuten</b> (Dauer × Gefühl: erfrischt ×1, neutral ×0,85, groggy ×0,5) kann ein Nap die Ampel um <b>genau eine Stufe</b> anheben — Rot→Gelb oder Gelb→Grün, nie zwei auf einmal.
+          <div className="mt-1 text-slate-500">Schlechter Nachtschlaf bleibt so sichtbar, statt vom Nap überdeckt zu werden. Der Zeitpunkt fließt nicht in die Bewertung ein, löst aber bei „später Nachmittag" einen Hinweis aus.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===================== 2.0: Prognose, Streak, Tagesempfehlung ===================== */
+// Riegel-Formel: T2 = T1 · (D2/D1)^1.06 — Standard-Hochrechnung für Laufzeiten
+function riegel5k(dist, sec) {
+  if (!dist || !sec || dist < 0.75) return null;
+  const t = Math.round(sec * Math.pow(5 / dist, 1.06));
+  return t >= 720 && t <= 3900 ? t : null; // Plausibilität: 12–65 Min
+}
+
+/* ===================== V3: Typbewusste Auswertung der Runden-Daten ===================== */
+const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+const isoAddDays = (iso, delta) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + delta); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const lastNDates = (n) => { const t = todayISO(); return Array.from({ length: n }, (_, i) => isoAddDays(t, -(n - 1 - i))); };
+// Arbeitsrunden (schnelles Cluster) von Trab-/Standpausen trennen — Basis für Intervalle & Tempo
+function classifyLaps(laps) {
+  const usable = (laps || []).filter((l) => l.pace > 0 && ((l.dist || 0) >= 0.15 || (l.sec || 0) >= 45));
+  if (usable.length < 2) return null;
+  const fastest = Math.min(...usable.map((l) => l.pace));
+  const work = usable.filter((l) => l.pace <= fastest * 1.12);
+  if (!work.length || work.length === usable.length) return null; // kein klarer Arbeit/Pause-Kontrast (z. B. gleichmäßiger Lauf)
+  const dist = work.reduce((s, l) => s + (l.dist || 0), 0);
+  const sec = work.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
+  if (dist < 0.4 || !sec) return null;
+  const hrs = work.filter((l) => l.hr).map((l) => l.hr);
+  return { work, dist: Math.round(dist * 100) / 100, sec: Math.round(sec), pace: sec / dist, hr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null, reps: work.length, fastest, slowest: Math.max(...work.map((l) => l.pace)) };
+}
+// Fasst einen Satz Runden zu einem Abschnitt zusammen (Distanz/Zeit/Pace/HF).
+// extractLaps() liefert nur "Laufen"-Runden — Warm up/Cool Down sind hier also schon draußen.
+function aggregateLaps(laps) {
+  const usable = (laps || []).filter((l) => l.pace > 0 && ((l.dist || 0) >= 0.15 || (l.sec || 0) >= 45));
+  if (!usable.length) return null;
+  const dist = usable.reduce((s, l) => s + (l.dist || 0), 0);
+  const sec = usable.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
+  if (dist < 0.4 || !sec) return null;
+  const hrs = usable.filter((l) => l.hr).map((l) => l.hr);
+  return { dist: Math.round(dist * 100) / 100, sec: Math.round(sec), pace: sec / dist, hr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null, reps: usable.length, work: new Set(usable.map((l) => l.lap)) };
+}
+// ZENTRAL: der auswertungs-relevante Abschnitt eines Laufs — Basis für Prognose, Pace-Chart,
+// Bestzeiten, Pace-HF/VO2max und Splits. Nutzt IMMER die Runden (nicht die verwässerte
+// Gesamt-Statistik inkl. Warm up/Cool Down), sofern welche da sind.
+// - Intervalle: Arbeitsrunden vom Trab trennen (Kontrast); ohne Kontrast = alle Runden Arbeit.
+// - Tempo/Test/Easy/Lang: der Lauf-Abschnitt (Warm up/Cool Down sind via extractLaps schon raus).
+// - Ohne Runden: Rückfall auf die Gesamt-Statistik.
+function runEffort(run) {
+  const laps = run.laps, hasLaps = laps && laps.length >= 2;
+  if (run.type === "int") {
+    if (hasLaps) {
+      const c = classifyLaps(laps);
+      if (c) return { dist: c.dist, sec: c.sec, pace: c.pace, hr: c.hr, reps: c.reps, work: new Set(c.work.map((l) => l.lap)), basis: `${c.reps}× Arbeitsrunden` };
+      const a = aggregateLaps(laps);
+      if (a) return { ...a, basis: `${a.reps}× Intervalle` };
+    }
+    return run.imported ? null : { dist: run.dist, sec: run.sec, pace: run.pace, hr: run.hrAvg ?? null, basis: "Intervall (manuell)" };
+  }
+  const label = run.type === "tempo" ? "Tempo-Block" : run.type === "test" ? "5K-Test" : "Lauf-Abschnitt";
+  if (hasLaps) { const a = aggregateLaps(laps); if (a) return { ...a, basis: label }; }
+  return { dist: run.dist, sec: run.sec, pace: run.pace, hr: run.hrAvg ?? null, basis: run.type === "tempo" ? "Tempo" : run.type === "test" ? "5K-Test" : "Gesamt" };
+}
+// Renn-repräsentativer Qualitäts-Effort je Lauftyp — einzige Basis der 5K-Prognose.
+// Easy/Lange fließen bewusst NICHT ein: Riegel setzt Wettkampfanstrengung voraus.
+function qualityEffort(run) {
+  if (run.type !== "test" && run.type !== "int" && run.type !== "tempo") return null;
+  const e = runEffort(run);
+  return e ? { dist: e.dist, sec: e.sec, basis: e.basis } : null;
+}
+// Effektive Pace für Charts/Bestzeiten — immer der relevante Abschnitt (runEffort), sonst Gesamt.
+function effectivePace(run) {
+  const e = runEffort(run);
+  return e ? e.pace : run.pace;
+}
+
+/* ===================== V3: Pace-HF-Verhältnis & VO2max-Schätzung ===================== */
+const hrMaxTanaka = (age) => Math.round(208 - 0.7 * (age || 18)); // konsistent mit den HF-Zonen des Laufplans (≈196)
+const STEADY_RUN = (r) => r.type === "easy" || r.type === "long" || r.type === "tempo";
+// ACSM-Laufformel (VO2 bei Pace) + Swain-Umrechnung (%HFmax → %VO2max) → Schätzwert, Tendenz zählt
+function estimateVo2max(paceSecPerKm, hrAvg, hrMax) {
+  if (!paceSecPerKm || !hrAvg || !hrMax) return null;
+  const pctHr = hrAvg / hrMax;
+  if (pctHr < 0.6 || pctHr > 0.96) return null; // zu locker/zu hart → Umrechnung unzuverlässig
+  const vo2 = 3.5 + 0.2 * (60000 / paceSecPerKm);
+  const pctVo2 = (pctHr * 100 - 37) / 0.64 / 100;
+  if (pctVo2 <= 0.3) return null;
+  const est = vo2 / pctVo2;
+  return est >= 25 && est <= 80 ? Math.round(est * 10) / 10 : null;
+}
+const efMetersPerBeat = (paceSec, hr) => (paceSec && hr ? Math.round(((60000 / paceSec) / hr) * 100) / 100 : null);
+
+/* ===================== V3: kleiner Info-Aufklapper (Muster wie LoadHelp) ===================== */
+function InfoToggle({ label, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400"><Info size={11} /> {label}</button>
+      {open && <div className="mt-1.5 rounded-lg bg-slate-100 px-2.5 py-2 text-[10.5px] leading-relaxed text-slate-600">{children}</div>}
+    </div>
+  );
+}
+// Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind
+function weekFulfilled(w, done, vbSlots) {
+  const items = buildWeekPlan(w, undefined, vbSlots).flatMap((d) => d.items).filter((i) => i.load > 0);
+  if (!items.length) return false;
+  return items.filter((i) => done[i.uid]).length / items.length >= 0.8;
+}
+function computeStreak(currentWeek, done, vbSlots) {
+  let s = 0;
+  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots)) s++; else break; }
+  if (weekFulfilled(currentWeek, done, vbSlots)) s++;
+  return s;
+}
+const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
+function dailyRecommendation(todaySessions, level, latest) {
+  const works = (todaySessions || []).filter((i) => i.load > 0);
+  const test = works.find((i) => i.type === "test");
+  if (test) return { tone: "info", text: "Testtag! Nur 10 Min locker einlaufen, 2–3 Steigerungen — dann Bestzeit jagen." };
+  if (!works.length) return { tone: "rest", text: "Heute ist Ruhetag — der Fortschritt passiert in der Erholung. Schlaf hat Prio." };
+  const hardRun = works.find((i) => i.sport === "run" && (i.type === "int" || i.type === "tempo"));
+  const lower = works.find((i) => i.sport === "strength" && i.key === "lower");
+  const vb = works.find((i) => i.sport === "vb");
+  const soreLegs = (latest?.soreness || 0) >= 4;
+  if (level === "red") {
+    if (hardRun) return { tone: "warn", text: `${hardRun.label} heute ersetzen: 20–25 Min Easy (HF 130–140). Der harte Reiz bringt ohne Erholung nichts.` };
+    if (lower) return { tone: "warn", text: "Schwere Beine heute streichen oder auf 20 Min Mobility reduzieren." };
+    if (vb) return { tone: "warn", text: "Volleyball ok — aber Sprungvolumen bewusst klein halten und danach früh ins Bett." };
+    return { tone: "warn", text: "Nur lockere Bewegung heute. Schlaf nachholen ist die beste Trainingseinheit." };
+  }
+  if (soreLegs && (hardRun || lower || vb)) return { tone: "warn", text: "Beine melden starken Muskelkater: Sprünge & Intervalle heute reduzieren, Technik/Oberkörper geht klar." };
+  if (level === "yellow") {
+    if (hardRun) return { tone: "mid", text: `${hardRun.label} heute leicht kürzen (z. B. eine Wiederholung weniger) und auf die HF-Obergrenze achten.` };
+    return { tone: "mid", text: "Plan machbar — locker angehen und nach der Einheit ehrlich in den Check-in." };
+  }
+  if (level === "green") {
+    const main = hardRun || lower || vb || works[0];
+    return { tone: "go", text: `Grünes Licht — volle Qualität bei: ${main.label}${main.time ? ` (${main.time})` : ""}.` };
+  }
+  return { tone: "none", text: "Trag im Recovery-Tab einen Check-in ein — dann bekommst du hier jeden Tag eine konkrete Empfehlung." };
+}
+/* ===================== 2.0: Undo beim Löschen ===================== */
+function useUndoDelete(setData) {
+  const [undo, setUndo] = useState(null);
+  const timer = useRef(null);
+  const trigger = (label, listKey, item) => {
+    setUndo({ label, listKey, item });
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setUndo(null), 6000);
+  };
+  const doUndo = () => {
+    setUndo((u) => {
+      if (u) setData((d) => ({ ...d, [u.listKey]: [...d[u.listKey], u.item] }));
+      return null;
+    });
+    clearTimeout(timer.current);
+  };
+  return { undo, trigger, doUndo };
+}
+function UndoToast({ undo, onUndo }) {
+  if (!undo) return null;
+  return (
+    <div className="fixed left-1/2 -translate-x-1/2 z-30 rounded-xl bg-slate-900 text-white text-xs font-semibold px-4 py-3 flex items-center gap-4 shadow-lg" style={{ bottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}>
+      <span>{undo.label} gelöscht</span>
+      <button onClick={onUndo} className="text-teal-300 font-bold">Rückgängig</button>
+    </div>
+  );
+}
+
+/* ==== Abhakbare Session-Zeile: ganze Fläche tippbar, klares Erledigt-Feedback ==== */
+function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
+  const dark = useDark();
+  const s = SPORT[item.sport];
+  const checkable = item.load > 0 && typeof onToggle === "function";
+  if (item.tournament) return (
+    <button onClick={checkable ? onToggle : undefined} className="w-full text-left rounded-2xl border shadow-sm p-3.5 flex items-center gap-3 transition active:scale-[0.99]" style={{ background: done ? (dark ? "#7c2d12" : "#fde68a") : softBg(dark, s.color, s.tint), borderColor: "#fbbf24" }}>
+      <div className="h-9 w-9 rounded-xl bg-amber-400 flex items-center justify-center shrink-0"><Trophy size={18} color="#7c2d12" /></div>
+      <div className="min-w-0 flex-1"><div className={`font-display font-semibold text-amber-900 ${done ? "line-through" : ""}`}>{item.label}</div><div className="text-xs text-amber-800/80">{item.desc}</div></div>
+      {checkable && <CheckBadge done={done} color="#b45309" />}
+    </button>
+  );
+  return (
+    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+      <div className="p-3.5 flex items-center gap-3">
+        <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
+          <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`font-semibold text-sm ${done ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
+            </div>
+            <div className="text-xs text-slate-500">{item.dur} · {item.desc}</div>
+          </div>
+        </button>
+        {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
+        {checkable && <CheckBadge done={done} color={s.color} onClick={onToggle} />}
+        {onExpand && <button onClick={onExpand} className="shrink-0 p-1 -mr-1 text-slate-400"><ChevronDown size={16} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
+      </div>
+      {onExpand && isOpen && (
+        <div className="px-4 pb-3 -mt-1">
+          {item.ex && <ul className="ml-11 space-y-1">{item.ex.map((e, k) => <li key={k} className="text-xs text-slate-600 font-num">– {e}</li>)}</ul>}
+          {extra && <div className="ml-11 mt-2.5">{extra}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+function CheckBadge({ done, color, onClick }) {
+  const dark = useDark();
+  return (
+    <button onClick={onClick} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: done ? color : (dark ? "#3b4a63" : "#cbd5e1"), background: done ? color : "transparent" }}>
+      {done && <Check size={16} color="#fff" strokeWidth={3} />}
+    </button>
+  );
+}
+
+/* ===================== COCKPIT ===================== */
+/* Kompakter Schule-Glance: nur sichtbar, wenn etwas offen ist — verlinkt in den vollen Schule-Tab */
+function SchoolGlanceCard({ data, goSchule }) {
+  const dark = useDark();
+  const open = data.schoolLog.filter((s) => !s.erledigt);
+  if (!open.length) return null;
+  const overdue = open.filter((s) => daysUntil(s.faelligkeit) < 0);
+  const next = [...open].sort((a, b) => a.faelligkeit.localeCompare(b.faelligkeit))[0];
+  const tone = overdue.length ? "warn" : daysUntil(next.faelligkeit) <= 1 ? "mid" : "rest";
+  const [accent, bright] = RECO_COLORS[tone];
+  const col = dark ? bright : accent;
+  return (
+    <button onClick={goSchule} className="w-full text-left">
+      <Card className="p-4" style={{ background: col + (dark ? "1a" : "10"), borderColor: col + "44" }}>
+        <div className="flex items-center justify-between mb-1.5">
+          <Eyebrow color={col}>Schule</Eyebrow>
+          <ChevronRight size={15} style={{ color: col }} />
+        </div>
+        <div className="text-sm font-semibold text-slate-800">{open.length} offen{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
+        <div className="text-xs text-slate-500 mt-0.5 truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</div>
+      </Card>
+    </button>
+  );
+}
+function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
+  const dark = useDark();
+  const today = new Date();
+  const todayKey = DAYS[(today.getDay() + 6) % 7];
+  const todayPlan = plan.find((d) => d.day === todayKey);
+  const inPlan = today >= PLAN_START && currentWeek <= TOTAL_WEEKS;
+  const recents = [...data.recoveryLog].sort((a, b) => b.date.localeCompare(a.date));
+  const latest = recents[0];
+  const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
+  const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
+  const weekLoad = plan.reduce((s, d) => s + d.load, 0);
+  const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
+  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots) : null;
+  const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
+  const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0).length, 0);
+  const daysToTest = Math.ceil((TEST_DATE - atMidnight(today)) / DAY_MS);
+  const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
+  const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
+  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots), [currentWeek, data.done, data.vbSlots]);
+  const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
+  const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
+  const recoText = dark ? recoBright : recoAccent;
+  // „Als Nächstes“: an trainingsfreien Tagen die nächste anstehende Einheit zeigen
+  const nextUp = useMemo(() => {
+    if (!inPlan || !todayPlan || todayPlan.items.some((i) => i.load > 0)) return null;
+    const idx = DAYS.indexOf(todayKey);
+    for (let off = 1; off <= 7; off++) {
+      const di = idx + off, wOff = Math.floor(di / 7), dKey = DAYS[di % 7], w = currentWeek + wOff;
+      if (w > TOTAL_WEEKS) return null;
+      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots);
+      const works = p.find((d) => d.day === dKey)?.items.filter((i) => i.load > 0) || [];
+      if (works.length) return { label: off === 1 ? "Morgen" : `Als Nächstes · ${DAY_FULL[dKey]}`, items: works };
+    }
+    return null;
+  }, [inPlan, todayPlan, todayKey, currentWeek, plan, data.vbSlots]);
+  const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
+  const movePrio = (i, dir) => {
+    const next = [...prios]; const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setData((d) => ({ ...d, prios: next }));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="tc-tablet-2col">
+      {/* Ziel-Karte: Turnier nur solange es ansteht, danach 5-km-Test */}
+      {!tournamentPassed ? (
+        <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4338ca 100%)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Eyebrow color="#c7d2fe">Nächstes Ziel</Eyebrow>
+              <div className="font-display text-white text-lg font-semibold mt-0.5">Schulturnier</div>
+              <div className="text-indigo-200 text-xs mt-0.5">Mi 15.07. · Volleyball</div>
+            </div>
+            <div className="text-right">
+              <div className="font-num text-4xl font-bold text-white leading-none">{daysToT > 0 ? daysToT : "0"}</div>
+              <div className="text-indigo-200 text-[11px] uppercase tracking-wider mt-1">{daysToT > 0 ? "Tage" : "heute!"}</div>
+            </div>
+          </div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {currentWeek}/16</div>
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{doneThisWeek}/{totalThisWeek} Einheiten</span></div>
+            <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#134e4a 0%,#0f766e 55%,#0d9488 100%)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Eyebrow color="#99f6e4">Nächstes Ziel</Eyebrow>
+              <div className="font-display text-white text-lg font-semibold mt-0.5">5-km-Testlauf</div>
+              <div className="text-teal-100 text-xs mt-0.5">Mi {fmtDM(TEST_DATE)} · Woche 16 · Bestzeit</div>
+            </div>
+            <div className="text-right">
+              <div className="font-num text-4xl font-bold text-white leading-none">{daysToTest > 0 ? daysToTest : "—"}</div>
+              <div className="text-teal-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
+            </div>
+          </div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {currentWeek}/16</div>
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] text-teal-100 mb-1"><span>Diese Woche</span><span className="font-num">{doneThisWeek}/{totalThisWeek} Einheiten</span></div>
+            <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
+          </div>
+        </Card>
+      )}
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2"><Eyebrow>Bereitschaft heute</Eyebrow><button onClick={goRecovery} className="text-[11px] font-semibold text-teal-700 inline-flex items-center gap-0.5">Check-in <ChevronRight size={13} /></button></div>
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-full flex items-center justify-center shrink-0" style={{ background: dark ? status.color + "26" : status.tint }}><Heart size={20} color={dark ? status.bright : status.color} /></div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap"><span className="font-display font-semibold" style={{ color: dark ? status.bright : status.color }}>{status.label}</span>{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
+            <div className="text-xs text-slate-500 leading-snug">{status.hint}</div>
+          </div>
+        </div>
+        {latest ? (
+          <div className="mt-3 flex gap-2 text-[11px] flex-wrap">
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">{latest.sleep}h Schlaf</span>
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">Form {latest.readiness}/5</span>
+            {latest.napMin ? <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">😴 {latest.napMin} Min</span> : null}
+            <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-500">{fmtISOshort(latest.date)}</span>
+          </div>
+        ) : <div className="mt-3 text-[11px] text-slate-400">Noch kein Check-in — tippe oben rechts, um Schlaf & Form einzutragen.</div>}
+      </Card>
+      </div>
+
+      {/* 2.0: Konkrete Tagesempfehlung aus Ampel + Muskelkater + Tagesplan */}
+      {inPlan && (
+        <Card className="p-4" style={{ background: recoAccent + (dark ? "21" : "12"), borderColor: recoAccent + (dark ? "59" : "44") }}>
+          <div className="flex items-start gap-2.5">
+            <Target size={16} style={{ color: recoText }} className="mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: recoText }}>Heutige Empfehlung</div>
+              <p className="text-xs leading-relaxed mt-1" style={{ color: recoText }}>{reco.text}</p>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* V3: Kcal-Schnellblick */}
+      {data.nutrition?.setup && (() => {
+        const kp = kcalPlan(data.nutrition.profile);
+        if (!kp) return null;
+        const tIso = todayISO();
+        const es = data.nutrition.intake.filter((e) => e.date === tIso);
+        const inn = es.filter((e) => e.kind !== "out").reduce((s, e) => s + e.kcal, 0);
+        const out = es.filter((e) => e.kind === "out").reduce((s, e) => s + e.kcal, 0) + garminKcalOn(data.runLog, tIso);
+        const tgt = Math.round(kp.target + (parseNum(data.nutrition.profile.addBack) / 100) * out);
+        const p = tgt ? Math.min(1, inn / tgt) : 0;
+        return (
+          <button onClick={goKcal} className="w-full text-left">
+            <Card className="p-3.5 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0"><Utensils size={16} className="text-teal-600" /></div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between"><span className="text-xs font-semibold text-slate-700">Kcal heute</span><span className="font-num text-[11px] text-slate-500">{inn} / {tgt}</span></div>
+                <div className="mt-1 h-1.5 rounded-full overflow-hidden bg-slate-100"><div className="h-full rounded-full" style={{ width: `${Math.round(p * 100)}%`, background: inn > tgt * 1.07 ? "#d97706" : "#0d9488" }} /></div>
+              </div>
+              <ChevronRight size={15} className="text-slate-300 shrink-0" />
+            </Card>
+          </button>
+        );
+      })()}
+
+      <SchoolGlanceCard data={data} goSchule={goSchule} />
+
+      <div>
+        <div className="flex items-center justify-between"><Eyebrow>{inPlan ? `Heute · ${DAY_FULL[todayKey]}` : "Plan-Status"}</Eyebrow>{inPlan && <span className="text-[10px] text-slate-400">Tippen = abhaken</span>}</div>
+        <div className="mt-2 space-y-2">
+          {inPlan && todayPlan
+            ? todayPlan.items.map((it) => (
+                <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
+                  onExpand={it.sport === "run" ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
+                  isOpen={openRun === it.uid}
+                  extra={it.sport === "run" ? <GarminExport item={it} week={currentWeek} /> : undefined}
+                />
+              ))
+            : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
+          {nextUp && (
+            <Card className="p-3.5 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0"><CalendarDays size={16} className="text-slate-500" /></div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-slate-700">{nextUp.label}</div>
+                <div className="text-[11px] text-slate-500 truncate">{nextUp.items.map((i) => i.label + (i.time ? ` ${i.time}` : "")).join(" · ")}</div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+
+      <div className="tc-tablet-2col">
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-1"><Eyebrow>Wochenrhythmus</Eyebrow><button onClick={goWeek} className="text-[11px] font-semibold text-indigo-700 inline-flex items-center gap-0.5">Wochenplan <ChevronRight size={13} /></button></div>
+        <div className="text-[11px] text-slate-400 font-num mb-1">
+          ⚡{weekLoad} diese Woche
+          {prevWeekLoad != null && (
+            <span className="text-slate-400">
+              {" "}· {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} letzte Woche
+            </span>
+          )}
+        </div>
+        <WeekRhythm plan={plan} week={currentWeek} highlightToday />
+        <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
+          {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
+        </div>
+        <div className="mt-2"><LoadHelp /></div>
+      </Card>
+
+      {/* Prioritäten */}
+      <Card className="p-4">
+        <Eyebrow>Prioritäten</Eyebrow>
+        <div className="text-[11px] text-slate-400 mt-1 mb-2">Steuert, was bei Zeitmangel oder roter Ampel zuerst gestrichen wird — von unten nach oben.</div>
+        <div className="divide-y divide-slate-100">
+          {prios.map((p, i) => (
+            <div key={p} className="flex items-center gap-2.5 py-2">
+              <span className="font-num text-xs font-bold text-slate-300 w-4">{i + 1}</span>
+              <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: softBg(dark, SPORT[p].color, SPORT[p].tint) }}><SportGlyph sport={p} size={15} /></div>
+              <span className="text-sm font-semibold text-slate-700 flex-1">{SPORT[p].label}</span>
+              {i === prios.length - 1 && <span className="text-[10px] text-slate-400 mr-1">wird zuerst gestrichen</span>}
+              <button onClick={() => movePrio(i, -1)} disabled={i === 0} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowUp size={14} /></button>
+              <button onClick={() => movePrio(i, 1)} disabled={i === prios.length - 1} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowDown size={14} /></button>
+            </div>
+          ))}
+        </div>
+      </Card>
+      </div>
+
+      <div className="flex gap-2.5">
+        <Stat label="Erledigt (Wo.)" value={`${doneThisWeek}/${totalThisWeek}`} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
+        <Stat label="Streak" value={streak} unit="Wo." accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
+        <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#0f766e" icon={<Moon size={13} className="text-teal-600" />} />
+      </div>
+
+      <a href="https://babypython67.github.io/5k-training/" target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
+        <span className="flex items-center gap-2 text-slate-700"><Footprints size={16} className="text-indigo-500" /> Lauf-Tracker (Einheiten abhaken)</span><ExternalLink size={15} className="text-slate-400" />
+      </a>
+    </div>
+  );
+}
+
+/* ===================== 2.0: Schnell-Eintrag aus der Krafteinheit ===================== */
+function StrengthQuickLog({ item, setData }) {
+  const names = (item.ex || []).map((e) => e.split(" – ")[0].trim());
+  const [form, setForm] = useState({ exercise: names[0] || "", weight: "", reps: "" });
+  const [saved, setSaved] = useState(false);
+  const timer = useRef(null);
+  const save = () => {
+    const w = Number(String(form.weight).replace(",", "."));
+    const reps = Number(form.reps);
+    if (!form.exercise || (!w && !reps)) return;
+    setData((d) => ({ ...d, strengthLog: [...d.strengthLog, { id: uid(), date: todayISO(), exercise: form.exercise, weight: w || 0, reps: reps || 0, sets: 0 }] }));
+    setForm((f) => ({ ...f, weight: "", reps: "" }));
+    setSaved(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setSaved(false), 2500);
+  };
+  return (
+    <div className="rounded-xl bg-slate-100 p-2.5">
+      <div className="text-[10px] font-semibold text-slate-500 mb-1.5">Gewicht schnell eintragen (heute)</div>
+      <div className="flex gap-1.5">
+        <select value={form.exercise} onChange={(e) => setForm({ ...form, exercise: e.target.value })} className="tc-input" style={{ flex: 2, minWidth: 0, padding: ".5rem .5rem" }}>
+          {names.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <input inputMode="decimal" placeholder="kg" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} className="tc-input font-num" style={{ flex: 1, minWidth: 0, padding: ".5rem .5rem" }} />
+        <input inputMode="numeric" placeholder="Wdh." value={form.reps} onChange={(e) => setForm({ ...form, reps: e.target.value })} className="tc-input font-num" style={{ flex: 1, minWidth: 0, padding: ".5rem .5rem" }} />
+        <button onClick={save} className="h-11 w-11 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
+      </div>
+      {saved && <div className="text-[10px] font-semibold text-emerald-700 mt-1.5">✓ Gespeichert — Verlauf unter Fortschritt › Kraftwerte</div>}
+    </div>
+  );
+}
+
+/* ===================== WOCHENPLAN ===================== */
+function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
+  const dark = useDark();
+  const [week, setWeek] = useState(currentWeek);
+  const [phaseView, setPhaseView] = useState(weekMeta(currentWeek).phase);
+  const [open, setOpen] = useState(null);
+  useEffect(() => { setPhaseView(weekMeta(week).phase); }, [week]);
+  const meta = weekMeta(week);
+  const effPhase = tournamentPassed ? weekMeta(week).phase : phaseView;
+  const plan = buildWeekPlan(week, effPhase, data.vbSlots);
+  const ph = PHASE[effPhase];
+  const isRegen = !!REGEN[week], isTestWeek = week >= TOTAL_WEEKS;
+  const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-3 flex items-center justify-between">
+        <button disabled={week <= 1} onClick={() => setWeek((w) => Math.max(1, w - 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronLeft size={18} /></button>
+        <div className="text-center"><div className="font-display font-bold text-slate-900">Woche {week}</div><div className="text-[11px] text-slate-500 font-num">{fmtDM(meta.monday)} – {fmtDM(meta.sunday)}{week === currentWeek ? " · aktuell" : ""}</div></div>
+        <button disabled={week >= TOTAL_WEEKS} onClick={() => setWeek((w) => Math.min(TOTAL_WEEKS, w + 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronRight size={18} /></button>
+      </Card>
+
+      {/* Phasen-Umschalter nur solange das Turnier noch ansteht */}
+      {!tournamentPassed && (
+        <div className="flex gap-2">{[1, 2].map((p) => <button key={p} onClick={() => setPhaseView(p)} className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold border transition ${phaseView === p ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={phaseView === p ? { background: p === 1 ? "#d97706" : "#7c3aed" } : {}}>{PHASE[p].short}</button>)}</div>
+      )}
+
+      <Card className="p-3.5"><div className="flex items-start gap-2"><Info size={15} className="text-slate-400 mt-0.5 shrink-0" /><p className="text-xs text-slate-600 leading-relaxed">{ph.desc}</p></div></Card>
+
+      {meta.hasT && <Card className="p-3.5" style={panel(dark, "#f59e0b", "#fff7ed", "#fbbf24")}><div className="flex items-start gap-2"><Trophy size={16} className="text-amber-600 mt-0.5 shrink-0" /><p className="text-xs text-amber-900 leading-relaxed"><b>Turnierwoche.</b> Mo/Di bewusst locker, Intervalle entfallen — am Mittwoch frische Beine fürs Turnier. Danach normaler Aufbau.</p></div></Card>}
+      {isRegen && effPhase === 2 && <Card className="p-3.5" style={panel(dark, "#14b8a6", "#f0fdfa", "#5eead4")}><p className="text-xs leading-relaxed text-teal-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa) — genau deshalb liegt hier die schwere Bein-/Power-Einheit: die Beine sind frei und haben bis zur nächsten harten Laufwoche Zeit zu erholen.</p></Card>}
+      {isRegen && effPhase === 1 && <Card className="p-3.5" style={panel(dark, "#14b8a6", "#f0fdfa", "#5eead4")}><p className="text-xs leading-relaxed text-teal-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa). Volleyball & leichte Kraft laufen weiter — Erholung aktiv steuern.</p></Card>}
+      {isTestWeek && <Card className="p-3.5" style={panel(dark, "#8b5cf6", "#f5f3ff", "#c4b5fd")}><p className="text-xs leading-relaxed" style={{ color: dark ? "#c4b5fd" : "#6d28d9" }}><b>Testwoche.</b> 5-km-Bestzeit am Mittwoch. Mo & Di sind echte Ruhetage, und das Mittwochs-Volleyball pausiert an dem Tag — Freitag geht's normal weiter.</p></Card>}
+
+      <div className="flex justify-end"><LoadHelp /></div>
+
+      <div className="space-y-2.5">
+        {plan.map((d) => {
+          const date = new Date(meta.monday.getTime() + DAYS.indexOf(d.day) * DAY_MS);
+          const isToday = week === currentWeek && isSameDay(date, new Date());
+          return (
+            <Card key={d.day} className="overflow-hidden" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
+              <div className="flex items-center gap-3 px-3.5 pt-3 pb-2">
+                <div className="text-center w-9 shrink-0"><div className={`font-display font-bold ${isToday ? "text-indigo-600" : "text-slate-800"}`}>{d.day}</div><div className="text-[10px] text-slate-400 font-num">{fmtDM(date)}</div></div>
+                <div className="flex flex-wrap gap-1.5">{d.items.map((it, i) => it.tournament ? <span key={i} className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-amber-950"><Trophy size={11} /> Turnier</span> : <SportChip key={i} sport={it.sport} small />)}</div>
+                {d.load > 0 && <span className="ml-auto font-num text-[11px] text-slate-400 shrink-0">⚡{d.load}</span>}
+              </div>
+              <div className="px-3 pb-3 space-y-1.5">
+                {d.items.map((it) => (
+                  <SessionRow key={it.uid} item={it}
+                    done={!!data.done[it.uid]}
+                    onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
+                    onExpand={(it.ex && it.ex.length) || it.sport === "run" ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                    isOpen={open === it.uid}
+                    extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" ? <GarminExport item={it} week={week} /> : undefined}
+                  />
+                ))}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ===================== FORTSCHRITT ===================== */
+const RUN_OPTS = [["int", "Intervalle"], ["tempo", "Tempo"], ["easy", "Easy"], ["long", "Langer Lauf"], ["test", "5 km Test"]];
+const BASELINE = ["Kniebeuge (5 Wdh.)", "Kreuzheben/RDL (5 Wdh.)", "Bankdrücken (5 Wdh.)", "Klimmzüge (max.)", "Schulterdrücken (8 Wdh.)", "Plank (Sek.)", "Sprunghöhe (cm)"];
+
+function ProgressTab({ data, setData, currentWeek }) {
+  const [sub, setSub] = useState("run");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">{[["run", "Laufzeiten", "#6366f1"], ["strength", "Kraftwerte", "#059669"]].map(([k, l, c]) => <button key={k} onClick={() => setSub(k)} className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold border transition ${sub === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={sub === k ? { background: c } : {}}>{l}</button>)}</div>
+      {sub === "run" ? <RunProgress data={data} setData={setData} currentWeek={currentWeek} /> : <StrengthProgress data={data} setData={setData} />}
+    </div>
+  );
+}
+
+/* ---- Garmin-CSV-Import ---- */
+function guessRunType(paceSec, dist, sec) {
+  if (paceSec == null) return "easy";
+  if (dist >= 4.85 && dist <= 5.25 && paceSec <= 305) return "test";
+  if (paceSec <= 292) return "int";
+  if (paceSec <= 322) return "tempo";
+  if (dist >= 7.5 || sec >= 45 * 60) return "long";
+  return "easy";
+}
+// v3.3: Lauftyp beim Import aus dem Trainingsplan ableiten statt nur per Pace zu raten.
+// buildWeekPlan ist die einzige Quelle der Wahrheit — damit greifen automatisch auch
+// Taper (Turnierwoche: Di-Intervalle -> Shakeout/easy), Regenerationswochen und die Testwoche.
+const __planRunCache = {};
+function plannedRunFor(dateISO) {
+  if (!dateISO) return null;
+  const d = new Date(dateISO + "T12:00:00"); // Mittag: keine Zeitzonen-Kippkante
+  if (isNaN(d) || atMidnight(d) < PLAN_START) return null;
+  const week = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)) + 1; // bewusst NICHT geklemmt: außerhalb des Plans -> null
+  if (week < 1 || week > TOTAL_WEEKS) return null;
+  const day = DAYS[(d.getDay() + 6) % 7];
+  const plan = __planRunCache[week] || (__planRunCache[week] = buildWeekPlan(week));
+  const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run");
+  return run ? { week, day, type: run.type } : null;
+}
+const isQualityType = (t) => t === "int" || t === "tempo" || t === "test";
+// Typ-Zuordnung beim Import: Plan gewinnt, Pace ist nur Fallback.
+// mismatch warnt nur bei grobem Widerspruch (Plan locker, gelaufen schnell — oder umgekehrt);
+// Feinunterschiede wie Tempo vs. Intervalle entscheidet allein der Plan.
+function assignRunType(dateISO, paceSec, dist, sec) {
+  const planInfo = plannedRunFor(dateISO);
+  const paceGuess = guessRunType(paceSec, dist, sec);
+  if (!planInfo) return { type: paceGuess, source: "pace", paceGuess, planInfo: null, mismatch: false };
+  const mismatch = isQualityType(planInfo.type) !== isQualityType(paceGuess);
+  return { type: planInfo.type, source: "plan", paceGuess, planInfo, mismatch };
+}
+function pickCol(row, keys) {
+  const lower = {};
+  Object.keys(row).forEach((k) => { lower[k.toLowerCase().trim()] = row[k]; });
+  for (const key of keys) {
+    const hit = Object.keys(lower).find((k) => k.includes(key));
+    if (hit && lower[hit] !== "" && lower[hit] != null) return lower[hit];
+  }
+  return null;
+}
+function parseGarminDate(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const de = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (de) return `${de[3]}-${String(de[2]).padStart(2, "0")}-${String(de[1]).padStart(2, "0")}`;
+  return null;
+}
+// Zahlen robust parsen: erkennt "5,00" (DE-Komma), "4.07" (Punkt als Dezimaltrenner) und "1.234,56" (Punkt=Tausender)
+function parseNumberLoose(v) {
+  if (v == null) return NaN;
+  let s = String(v).trim();
+  if (!s) return NaN;
+  if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  return Number(s);
+}
+// Erkennt die Zusammenfassungs-/Übersichtszeile eines Garmin-Einzelaktivitäts- bzw. Rundenexports
+// (Format: Intervall/Abschnitttyp/Runde/Zeit/Distanz je Runde, ohne Datumsspalte)
+function findSummaryRow(rows) {
+  return rows.find((row) => Object.values(row).some((v) => /^(übersicht|summary|total|gesamt)$/i.test(String(v).trim()))) || null;
+}
+function numOrNull(v) { const n = parseNumberLoose(v); return v == null || v === "" || isNaN(n) ? null : n; }
+// Zusatzmetriken, die Garmin-Exporte (Listen- wie Rundenexport) oft mitliefern — bislang ungenutzt, jetzt für smarte Charts nutzbar
+function extractExtras(row) {
+  const hrAvg = numOrNull(pickCol(row, ["ø herzfrequenz", "avg heart", "average heart", "durchschnittliche hf"]));
+  const hrMax = numOrNull(pickCol(row, ["maximale herzfrequenz", "max heart", "max hf"]));
+  const elevGain = numOrNull(pickCol(row, ["anstieg gesamt", "elevation gain", "positiver höhenunterschied"]));
+  const cadence = numOrNull(pickCol(row, ["ø schrittfrequenz", "avg cadence", "average cadence"]));
+  const strideLen = numOrNull(pickCol(row, ["ø schrittlänge", "avg stride", "average stride"]));
+  const calories = numOrNull(pickCol(row, ["kalorien", "calories"]));
+  const out = {};
+  if (hrAvg != null) out.hrAvg = Math.round(hrAvg);
+  if (hrMax != null) out.hrMax = Math.round(hrMax);
+  if (elevGain != null) out.elevGain = Math.round(elevGain);
+  if (cadence != null) out.cadence = Math.round(cadence);
+  if (strideLen != null) out.strideLen = Math.round(strideLen * 100) / 100;
+  if (calories != null) out.calories = Math.round(calories);
+  return out;
+}
+// Einzelne Runden/Splits aus dem Garmin-Rundenexport (nur echte Laufabschnitte, keine Warm-up/Cool-Down/Sammel-Zeilen)
+function extractLaps(rows) {
+  const laps = [];
+  rows.forEach((row) => {
+    const abschnitt = pickCol(row, ["abschnitttyp", "lap type"]);
+    const runde = pickCol(row, ["runde", "lap"]);
+    if (!abschnitt || !/^(laufen|run)$/i.test(String(abschnitt).trim())) return;
+    if (!runde || !/^\d+$/.test(String(runde).trim())) return; // Bereiche wie "2 - 3" überspringen, nur Einzelrunden
+    const dist = numOrNull(pickCol(row, ["distanz", "distance"]));
+    const sec = parseTimeToSec(pickCol(row, ["zeit", "time"]));
+    const hr = numOrNull(pickCol(row, ["ø herzfrequenz", "avg heart"]));
+    if (!dist || !sec) return;
+    laps.push({ lap: Number(runde), dist: Math.round(dist * 100) / 100, sec, pace: sec / dist, hr: hr != null ? Math.round(hr) : null });
+  });
+  return laps.sort((a, b) => a.lap - b.lap);
+}
+function MiniBadge({ icon, text, color }) {
+  return <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-num" style={{ background: color + "1a", color }}>{icon}{text}</span>;
+}
+// Splits v4: Runden-Liste statt Balkendiagramm. Jede Runde eine Zeile mit exakter Pace,
+// Abweichungsbalken relativ zum Ø Arbeit (links = schneller, rechts = langsamer) und HF.
+// Kein Achsen-/Kontrast-/Clipping-Risiko, exakte Werte direkt lesbar, 380px-tauglich.
+function SplitsChart({ laps, run }) {
+  const dark = useDark();
+  const eff = run.type === "int" || run.type === "tempo" ? runEffort(run) : null;
+  const workSet = eff && eff.work ? eff.work : null;
+  const refPace = eff ? eff.pace : run.pace;
+  const w = planWeekOf(new Date(run.date + "T12:00:00"));
+  const target = (run.type === "int" || run.type === "tempo") && w >= 1 && w <= TOTAL_WEEKS ? Math.round(targetPaceSec(run.type, w)) : null;
+  const rows = laps.map((l) => {
+    const isWork = workSet ? workSet.has(l.lap) : true; // ohne eff (Easy/Lang): alles regulär
+    return { lap: l.lap, pace: l.pace, hr: l.hr, dist: l.dist, isWork, dev: isWork ? l.pace - refPace : null };
+  });
+  // Skala: größte Abweichung der Arbeitsrunden, mind. ±10 s — kleine Streuung wird NICHT künstlich
+  // aufgeblasen: ein konstanter Lauf soll auch konstant aussehen.
+  const maxDev = Math.max(10, ...rows.filter((r) => r.dev != null).map((r) => Math.abs(r.dev)));
+  const label = eff ? (run.type === "int" ? `${eff.reps}× Arbeit` : "Tempo-Block") + ` Ø ${secToMMSS(Math.round(eff.pace))}/km` : `Ø ${secToMMSS(Math.round(refPace))}/km`;
+  const muted = dark ? "#64748b" : "#94a3b8", strong = dark ? "#e2e8f0" : "#0f172a";
+  return (
+    <div className="px-4 pb-3 -mt-1">
+      <div className="flex items-center gap-2 mb-1.5 text-[10px]">
+        <span className="font-semibold" style={{ color: safeText(dark, "#0d9488") }}>{label}</span>
+        {target && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#8b5cf6", "#f3e8ff"), color: safeText(dark, "#7c3aed") }}>Ziel {secToMMSS(target)}</span>}
+        <span style={{ color: muted }}>◄ schneller · langsamer ►</span>
+      </div>
+      <div className="space-y-1">
+        {rows.map((r) => {
+          const devW = r.dev != null ? Math.min(Math.abs(r.dev) / maxDev, 1) * 50 : 0;
+          const faster = r.dev != null && r.dev < 0;
+          return (
+            <div key={r.lap} className="flex items-center gap-2" style={{ opacity: r.isWork ? 1 : 0.55 }}>
+              <span className="w-6 shrink-0 text-[10px] font-num" style={{ color: muted }}>R{r.lap}</span>
+              <span className="w-11 shrink-0 text-xs font-num font-semibold" style={{ color: r.isWork ? strong : muted }}>{secToMMSS(Math.round(r.pace))}</span>
+              <div className="relative flex-1 h-3.5 rounded" style={{ background: dark ? "#1c2940" : "#f1f5f9" }}>
+                <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: dark ? "#3b4a63" : "#cbd5e1" }} />
+                {r.dev != null ? (
+                  <div className="absolute inset-y-0.5 rounded-sm" style={faster
+                    ? { right: "50%", width: `${devW}%`, background: "#0d9488" }
+                    : { left: "50%", width: `${devW}%`, background: r.dev > 15 ? "#f59e0b" : "#818cf8" }} />
+                ) : (
+                  <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>Pause · {r.dist} km</span>
+                )}
+              </div>
+              <span className="w-9 shrink-0 text-right text-[10px] font-num" style={{ color: r.hr ? safeText(dark, "#e11d48") : muted }}>{r.hr ? `${r.hr} ♥` : "–"}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RunProgress({ data, setData, currentWeek }) {
+  const dark = useDark();
+  const [type, setType] = useState("int");
+  const [form, setForm] = useState(() => ({ date: todayISO(), type: plannedRunFor(todayISO())?.type ?? "int", dist: "", time: "", typeTouched: false })); // v3.3: Typ aus Plan vorbelegt
+  const [importMsg, setImportMsg] = useState(null);
+  const [pending, setPending] = useState(null); // Vorschau eines erkannten Einzellaufs, wartet auf Datums-Bestätigung
+  const [openRun, setOpenRun] = useState(null); // welcher Lauf hat seine Splits aufgeklappt
+  const fileRef = useRef(null);
+
+  const add = () => { const sec = parseTimeToSec(form.time), dist = Number(String(form.dist).replace(",", ".")); if (!sec || !dist) return; setData((d) => ({ ...d, runLog: [...d.runLog, { id: uid(), date: form.date, type: form.type, dist, sec, pace: sec / dist }] })); setForm((f) => ({ ...f, dist: "", time: "", typeTouched: false, type: plannedRunFor(f.date)?.type ?? "int" })); }; // typeTouched wird nicht gespeichert; nach Add erneut aus Plan vorbelegen
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const remove = (id) => {
+    const item = data.runLog.find((r) => r.id === id);
+    setData((d) => ({ ...d, runLog: d.runLog.filter((r) => r.id !== id) }));
+    if (item) triggerUndo("Lauf", "runLog", item);
+  };
+  // V3: 5K-Prognose nur aus Qualitäts-Efforts — Easy/Lange bewusst ausgeschlossen,
+  // bei Intervallen/Tempo zählen nur die Arbeitsrunden aus den CSV-Splits (Pausen rausgerechnet)
+  const predData = useMemo(() => {
+    const preds = data.runLog
+      .map((r) => { const q = qualityEffort(r); const pred = q ? riegel5k(q.dist, q.sec) : null; return pred ? { iso: r.date, date: fmtISOshort(r.date), pred, basis: q.basis, dist: q.dist, pace: q.sec / q.dist } : null; })
+      .filter(Boolean).sort((a, b) => a.iso.localeCompare(b.iso));
+    let best = Infinity, bestInfo = null; const trend = [];
+    preds.forEach((p) => { const isRecord = p.pred < best; if (isRecord) { best = p.pred; bestInfo = p; } trend.push({ date: p.date, pred: best, isRecord }); });
+    const raw = preds.map((p) => ({ date: p.date, pred: p.pred }));
+    return { trend, raw, bestInfo };
+  }, [data.runLog]);
+  const predTrend = predData.trend, predRaw = predData.raw, bestInfo = predData.bestInfo;
+  const [predView, setPredView] = useState("best"); // "best" = Bestwert-Verlauf, "raw" = Prognose pro Lauf
+  const bestPred = bestInfo ? bestInfo.pred : null;
+  // Bestzeiten: schnellste effektive Pace je Lauftyp (Intervalle/Tempo = Arbeitsrunden-Pace)
+  const pbs = useMemo(() => { const m = {}; data.runLog.forEach((r) => { const p = effectivePace(r); if (!m[r.type] || p < m[r.type].p) m[r.type] = { p, r }; }); return m; }, [data.runLog]);
+  const pbIds = useMemo(() => new Set(Object.values(pbs).filter((e) => data.runLog.filter((x) => x.type === e.r.type).length >= 2).map((e) => e.r.id)), [pbs, data.runLog]);
+  const confirmPending = () => {
+    if (!pending) return;
+    const key = `${pending.date}|${pending.dist.toFixed(1)}`;
+    const exists = data.runLog.some((r) => `${r.date}|${r.dist.toFixed(1)}` === key);
+    if (exists) { setImportMsg({ ok: false, text: "Für dieses Datum und diese Distanz existiert bereits ein Eintrag." }); return; }
+    const { laps, typeTouched, ...rest } = pending; // typeTouched ist nur UI-Zustand, wird nicht gespeichert
+    const entry = { id: uid(), imported: true, ...rest, ...(laps && laps.length > 1 ? { laps } : {}) };
+    setData((d) => ({ ...d, runLog: [...d.runLog, entry] }));
+    setImportMsg({ ok: true, text: `Lauf vom ${fmtISOshort(pending.date)} übernommen${laps?.length > 1 ? ` (inkl. ${laps.length} Runden-Splits)` : ""}.` });
+    setPending(null);
+  };
+  const discardPending = () => { setPending(null); setImportMsg(null); };
+  // v3.3: Herkunft des Typ-Vorschlags für die Vorschau-Karte (Plan-Treffer vs. Pace-Schätzung)
+  const pendingAssign = pending ? assignRunType(pending.date, pending.pace, pending.dist, pending.sec) : null;
+
+  const handleCsv = (file) => {
+    if (!file) return;
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: (res) => {
+        try {
+          const rows = res.data || [];
+          if (!rows.length) { setImportMsg({ ok: false, text: "Die Datei enthält keine Daten." }); return; }
+          const fields = (res.meta && res.meta.fields) || Object.keys(rows[0]);
+          const hasDateCol = fields.some((f) => /datum|date/i.test(f));
+
+          // ---- Fall A: Aktivitäten-Liste (mehrere Läufe, mit Datumsspalte) ----
+          if (hasDateCol) {
+            const parsed = [];
+            rows.forEach((row) => {
+              const actType = pickCol(row, ["aktivitätstyp", "activity type", "typ", "sport"]);
+              if (actType && !/lauf|run|jog/i.test(String(actType))) return; // nur Läufe übernehmen
+              const date = parseGarminDate(pickCol(row, ["datum", "date"]));
+              const distRaw = pickCol(row, ["distanz", "distance", "strecke"]);
+              const timeRaw = pickCol(row, ["zeit", "time", "dauer", "duration"]);
+              if (!date || !distRaw) return;
+              const dist = parseNumberLoose(distRaw);
+              const sec = parseTimeToSec(timeRaw);
+              if (!dist || isNaN(dist) || !sec) return;
+              const pace = sec / dist;
+              const a = assignRunType(date, pace, dist, sec); // v3.3: Plan gewinnt, Pace nur Fallback
+              parsed.push({ date, dist: Math.round(dist * 100) / 100, sec, pace, type: a.type, _assign: a, ...extractExtras(row) });
+            });
+            if (parsed.length) {
+              setData((d) => {
+                const exists = new Set(d.runLog.map((r) => `${r.date}|${r.dist.toFixed(1)}`));
+                const freshRaw = parsed.filter((p) => !exists.has(`${p.date}|${p.dist.toFixed(1)}`));
+                // Statistik bewusst nur über tatsächlich importierte Läufe (Duplikate zählen nicht mit)
+                const withExtras = freshRaw.filter((p) => p.hrAvg).length;
+                const fromPlan = freshRaw.filter((p) => p._assign.source === "plan").length;
+                const byPace = freshRaw.length - fromPlan;
+                const mismatchDates = freshRaw.filter((p) => p._assign.mismatch).map((p) => fmtISOshort(p.date));
+                const fresh = freshRaw.map(({ _assign, ...p }) => ({ id: uid(), imported: true, ...p }));
+                const typeBits = !fresh.length ? ""
+                  : fromPlan
+                    ? ` Lauftyp bei ${fromPlan === fresh.length ? "allen" : fromPlan} aus dem Trainingsplan übernommen${byPace ? `, bei ${byPace} per Pace geschätzt (kein Plan-Lauf an dem Tag)` : ""}.`
+                    : ` Lauftyp per Pace geschätzt — an diesen Tagen steht kein Lauf im Plan.`;
+                setImportMsg({ ok: true, text: `${fresh.length} Läufe importiert (${parsed.length - fresh.length} Duplikate übersprungen).${typeBits}${withExtras ? ` Bei ${withExtras} wurden zusätzlich Herzfrequenz-/Höhendaten übernommen.` : ""}${mismatchDates.length ? ` ⚠️ Bitte prüfen (${mismatchDates.join(", ")}): Das gelaufene Tempo passt nicht recht zum geplanten Lauftyp — Typ ggf. im Eintrag anpassen.` : ""}` });
+                return { ...d, runLog: [...d.runLog, ...fresh] };
+              });
+              return;
+            }
+            // Datumsspalte vorhanden, aber nichts brauchbares gefunden -> unten mit Fall B weiterprobieren
+          }
+
+          // ---- Fall B: Garmin-Einzelaktivitäts-/Rundenexport (Warm-up/Laufabschnitte/Cool-Down, ohne Datum) ----
+          const summaryRow = findSummaryRow(rows) || rows[rows.length - 1];
+          const distRaw = pickCol(summaryRow, ["distanz", "distance"]);
+          const timeRaw = pickCol(summaryRow, ["gesamtzeit", "zeit", "time", "duration"]);
+          const dist = parseNumberLoose(distRaw);
+          const sec = parseTimeToSec(timeRaw);
+          if (dist && sec && !isNaN(dist)) {
+            const pace = sec / dist;
+            const assigned = assignRunType(todayISO(), pace, dist, sec); // v3.3: Plan gewinnt, Pace nur Fallback
+            const distR = Math.round(dist * 100) / 100;
+            const extras = extractExtras(summaryRow);
+            const laps = extractLaps(rows);
+            setPending({ date: todayISO(), type: assigned.type, typeTouched: false, dist: distR, sec, pace, laps, ...extras });
+            const bits = [];
+            if (extras.hrAvg) bits.push(`Ø ${extras.hrAvg} bpm`);
+            if (laps.length > 1) bits.push(`${laps.length} Runden-Splits`);
+            setImportMsg({ ok: true, text: `Einzelaktivität erkannt (Rundenexport ohne Datum): ${distR} km in ${secToMMSS(sec)}${bits.length ? " · " + bits.join(" · ") : ""}. Vorschau unten prüfen — Datum setzen und übernehmen.` });
+            return;
+          }
+          setImportMsg({ ok: false, text: "Keine Lauf-Daten gefunden. Unterstützt werden Garmin-Aktivitätenlisten (mit Datumsspalte) und Garmin-Einzelaktivitäts-/Rundenexporte (mit \u201eÜbersicht\u201c-Zeile)." });
+        } catch (_) { setImportMsg({ ok: false, text: "Datei konnte nicht gelesen werden." }); }
+      },
+      error: () => setImportMsg({ ok: false, text: "Datei konnte nicht gelesen werden." }),
+    });
+  };
+
+  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), pace: Math.round(effectivePace(r)) })), [data.runLog, type]); // Intervalle/Tempo: Arbeitsrunden-Pace
+  const target = targetPaceSec(type, currentWeek);
+  const list = [...data.runLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
+  // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
+  const hrMax = hrMaxTanaka(Number(data.nutrition?.profile?.age) || 18);
+  const steadyPoints = useMemo(() => data.runLog
+    .filter((r) => r.hrAvg && STEADY_RUN(r) && r.dist >= 1.5)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((r) => { const e = r.type === "tempo" ? runEffort(r) : null; return { iso: r.date, date: fmtISOshort(r.date), pace: e ? e.pace : r.pace, hr: e && e.hr ? e.hr : r.hrAvg }; }), [data.runLog]);
+  const efSeries = useMemo(() => steadyPoints.map((p) => ({ date: p.date, ef: efMetersPerBeat(p.pace, p.hr) })).filter((p) => p.ef), [steadyPoints]);
+  const vo2Series = useMemo(() => {
+    const pts = steadyPoints.map((p) => { const est = estimateVo2max(p.pace, p.hr, hrMax); return est ? { iso: p.iso, date: p.date, est } : null; }).filter(Boolean);
+    return pts.map((p, i, a) => ({ ...p, trend: Math.round(median(a.slice(Math.max(0, i - 4), i + 1).map((x) => x.est)) * 10) / 10 }));
+  }, [steadyPoints, hrMax]);
+  const vo2Now = vo2Series.length ? vo2Series[vo2Series.length - 1].trend : null;
+  const vo2Arrow = useMemo(() => {
+    if (vo2Series.length < 2) return "";
+    const last = vo2Series[vo2Series.length - 1];
+    const old = [...vo2Series].reverse().find((p) => p.iso <= isoAddDays(last.iso, -21));
+    if (!old) return "";
+    return last.trend - old.trend >= 1 ? "↑" : old.trend - last.trend >= 1 ? "↓" : "→";
+  }, [vo2Series]);
+  return (
+    <div className="space-y-4">
+      {/* V3: 5K-Prognose — nur Qualitäts-Efforts */}
+      <Card className="p-4" style={{ background: "linear-gradient(135deg,#312e81 0%,#4f46e5 100%)", borderColor: "transparent" }}>
+        <Eyebrow color="#c7d2fe">5K-Prognose · Riegel-Formel</Eyebrow>
+        {bestPred ? (
+          <>
+            <div className="mt-1 flex items-baseline gap-2.5">
+              <span className="font-num text-3xl font-bold text-white leading-none">{secToMMSS(bestPred)}</span>
+              <span className="text-indigo-200 text-xs font-num">≈ {secToMMSS(Math.round(bestPred / 5))}/km</span>
+            </div>
+            <div className="text-[11px] text-indigo-200 mt-1.5 font-num">Basis: {bestInfo.basis} · {bestInfo.dist} km @ {secToMMSS(Math.round(bestInfo.pace))}/km ({bestInfo.date})</div>
+            {vo2Now && <div className="text-[11px] text-indigo-200 mt-0.5">Fitness-Trend: VO₂max ≈ {vo2Now} {vo2Arrow}</div>}
+            {predTrend.length >= 2 && (
+              <>
+                <div className="flex gap-1 mt-2 mb-1">
+                  <button onClick={() => setPredView("best")} className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition ${predView === "best" ? "bg-white text-indigo-700" : "bg-white/15 text-indigo-100"}`}>Bestwert</button>
+                  <button onClick={() => setPredView("raw")} className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition ${predView === "raw" ? "bg-white text-indigo-700" : "bg-white/15 text-indigo-100"}`}>Pro Lauf</button>
+                </div>
+                <div style={{ width: "100%", height: 100 }}><ResponsiveContainer>
+                  <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
+                    <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipProps(true)} />
+                    <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
+                  </LineChart>
+                </ResponsiveContainer></div>
+                <div className="text-[10px] text-indigo-200/70 mt-1">{predView === "best" ? "Zeigt deinen bisher schnellsten Prognosewert — bleibt flach, solange kein neuer Rekord dazukommt." : "Zeigt die Prognose jedes einzelnen Qualitäts-Laufs, auch wenn sie schlechter als dein Bestwert war."}</div>
+              </>
+            )}
+            <div className="text-[10px] text-indigo-200/80 mt-1.5 leading-relaxed">Zählt nur echte Qualitäts-Efforts: 5K-Test, Tempo-Block, Intervall-Arbeitsrunden (Pausen rausgerechnet). Easy/Lange fließen bewusst nicht ein.</div>
+          </>
+        ) : (
+          <div className="text-xs text-indigo-200 mt-1.5 leading-relaxed">Noch keine Qualitätseinheit erfasst. Die Prognose nutzt bewusst nur Intervalle/Tempo (Arbeitsrunden aus dem Garmin-Import) oder den 5K-Test — Easy-Läufe sagen nichts über deine Rennzeit aus und bleiben draußen.</div>
+        )}
+      </Card>
+
+      {/* Garmin-Import */}
+      <Card className="p-4" style={panel(dark, "#6366f1", "#eef2ff", "#c7d2fe")}>
+        <div className="flex items-start gap-2">
+          <Upload size={15} className="text-indigo-500 mt-0.5 shrink-0" />
+          <p className="text-xs text-indigo-900 leading-relaxed"><b>Garmin-Import.</b> Exportiere in Garmin Connect deine Aktivitäten (oder eine Einzelaktivität mit Runden) als CSV und lade sie hier hoch. Neben Datum, Distanz und Zeit werden — sofern vorhanden — auch Herzfrequenz, Schrittfrequenz, Höhenmeter und Runden-Splits übernommen. Der Lauftyp wird automatisch aus deinem Trainingsplan übernommen (Datum → geplante Einheit); nur wenn dort kein Lauf steht, wird er anhand der Pace geschätzt.</p>
+        </div>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { handleCsv(e.target.files?.[0]); e.target.value = ""; }} />
+        <button onClick={() => fileRef.current?.click()} className="mt-2.5 w-full rounded-xl border-2 border-dashed border-indigo-300 bg-white/60 py-2.5 text-sm font-semibold text-indigo-700 flex items-center justify-center gap-1.5"><Upload size={15} /> CSV-Datei auswählen</button>
+        {importMsg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${importMsg.ok ? "bg-teal-100 text-teal-800" : "bg-rose-100 text-rose-700"}`}>{importMsg.text}</div>}
+      </Card>
+
+      {/* Vorschau eines erkannten Einzellaufs (Rundenexport ohne Datum) */}
+      {pending && (
+        <Card className="p-4" style={panel(dark, "#f59e0b", "#fffbeb", "#fcd34d")}>
+          <Eyebrow color="#b45309">Vorschau · Datum bestätigen</Eyebrow>
+          <div className="mt-2 grid grid-cols-2 gap-2.5">
+            <input type="date" value={pending.date} onChange={(e) => setPending((p) => { const nd = e.target.value; const a = assignRunType(nd, p.pace, p.dist, p.sec); return { ...p, date: nd, ...(p.typeTouched ? {} : { type: a.type }) }; })} className="tc-input col-span-2" />
+            <select value={pending.type} onChange={(e) => setPending({ ...pending, type: e.target.value, typeTouched: true })} className="tc-input col-span-2">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          </div>
+          {pendingAssign && !pending.typeTouched && (
+            <div className="mt-2 text-[10.5px] leading-relaxed" style={{ color: safeText(dark, "#92400e") }}>
+              {pendingAssign.source === "plan"
+                ? `Typ aus dem Trainingsplan übernommen (Woche ${pendingAssign.planInfo.week}, ${DAY_FULL[pendingAssign.planInfo.day]}: ${RUN_TYPE[pendingAssign.planInfo.type].label}).`
+                : "An diesem Tag steht kein Lauf im Plan — Typ per Pace geschätzt."}
+              {pendingAssign.mismatch && ` ⚠️ Das gelaufene Tempo wirkt eher nach „${RUN_TYPE[pendingAssign.paceGuess].label}“ — bitte kurz prüfen.`}
+            </div>
+          )}
+          <div className="mt-2.5 font-num text-sm text-slate-800">{pending.dist} km · {secToMMSS(pending.sec)} · {secToMMSS(pending.pace)}/km</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {pending.hrAvg && <MiniBadge icon={<HeartPulse size={11} />} text={`Ø ${pending.hrAvg} bpm`} color="#e11d48" />}
+            {pending.hrMax && <MiniBadge text={`Max ${pending.hrMax} bpm`} color="#e11d48" />}
+            {pending.cadence && <MiniBadge text={`${pending.cadence} spm`} color="#0d9488" />}
+            {pending.strideLen && <MiniBadge text={`${pending.strideLen} m Schritt`} color="#0d9488" />}
+            {pending.elevGain != null && pending.elevGain > 0 && <MiniBadge icon={<Mountain size={11} />} text={`+${pending.elevGain} m`} color="#78350f" />}
+            {pending.calories && <MiniBadge text={`${pending.calories} kcal`} color="#7c3aed" />}
+            {pending.laps?.length > 1 && <MiniBadge text={`${pending.laps.length} Runden`} color="#4338ca" />}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button onClick={discardPending} className="flex-1 rounded-xl bg-white border border-amber-300 text-amber-800 py-2 text-xs font-semibold">Verwerfen</button>
+            <button onClick={confirmPending} className="flex-1 rounded-xl bg-amber-500 text-white py-2 text-xs font-semibold flex items-center justify-center gap-1.5"><Check size={14} /> Übernehmen</button>
+          </div>
+        </Card>
+      )}
+
+      <Card className="p-4"><Eyebrow color="#4338ca">Zielpace aktuell (Woche {currentWeek})</Eyebrow>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Intervalle</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("int", currentWeek))}/km</div></div>
+          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Tempo</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("tempo", currentWeek))}/km</div></div>
+        </div>
+      </Card>
+      <Card className="p-4"><Eyebrow>Lauf manuell eintragen</Eyebrow>
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
+          <input type="date" value={form.date} onChange={(e) => setForm((f) => { const nd = e.target.value; return { ...f, date: nd, ...(f.typeTouched ? {} : { type: plannedRunFor(nd)?.type ?? "int" }) }; })} className="tc-input col-span-2" />
+          <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, typeTouched: true })} className="tc-input col-span-2">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          {(() => { const fp = plannedRunFor(form.date); return (
+            <div className="col-span-2 -mt-1 text-[10.5px] leading-relaxed" style={{ color: safeText(dark, fp ? "#4338ca" : "#94a3b8") }}>
+              {fp && !form.typeTouched
+                ? `Aus Plan vorbelegt: Woche ${fp.week}, ${DAY_FULL[fp.day]} — ${RUN_TYPE[fp.type].label}. Bei Bedarf oben anpassen.`
+                : fp
+                  ? `Plan an dem Tag: ${RUN_TYPE[fp.type].label} (du hast den Typ selbst gewählt).`
+                  : "Kein Lauf im Plan an dem Tag — Typ frei wählbar."}
+            </div>
+          ); })()}
+          <input inputMode="decimal" placeholder="Distanz (km)" value={form.dist} onChange={(e) => setForm({ ...form, dist: e.target.value })} className="tc-input" />
+          <input inputMode="numeric" placeholder="Zeit (mm:ss)" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} className="tc-input font-num" />
+        </div>
+        <button onClick={add} className="mt-3 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
+      </Card>
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-1"><Eyebrow>Pace-Verlauf</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+        <div className="text-[10px] text-slate-400 mb-2">niedriger = schneller</div>
+        {series.length >= 2 ? (
+          <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
+            <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <YAxis reversed domain={["dataMin-8", "dataMax+8"]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={secToMMSS} width={46} />
+              <Tooltip formatter={(v) => [secToMMSS(v) + "/km", "Pace"]} {...tipProps(dark)} />
+              {target && <ReferenceLine y={target} stroke="#94a3b8" strokeDasharray="4 4" label={chipLabel("Ziel", "#64748b", dark, "below")} />}
+              <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Art für den Verlauf — importiere oben deine Garmin-CSV oder trag Läufe manuell ein.</div>}
+      </Card>
+
+      {/* 2.0: Bestzeiten je Lauftyp */}
+      {Object.keys(pbs).length > 0 && (
+        <Card className="p-4">
+          <Eyebrow>Bestzeiten (Pace)</Eyebrow>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {RUN_OPTS.filter(([v]) => pbs[v]).map(([v, l]) => (
+              <div key={v} className="rounded-xl bg-slate-100 p-2.5">
+                <div className="text-[11px] font-semibold text-slate-500">{l}</div>
+                <div className="font-num font-bold text-slate-800">{secToMMSS(pbs[v].p)}/km</div>
+                <div className="text-[10px] text-slate-400 font-num">{fmtISOshort(pbs[v].r.date)} · {pbs[v].r.dist} km</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Smarte Zusatz-Charts, gespeist aus den erweiterten Garmin-Metriken */}
+      <Card className="p-4">
+        <Eyebrow color="#0d9488">Laufökonomie</Eyebrow>
+        <div className="text-[10px] text-slate-400 mt-1 mb-2">Schrittfrequenz & Schrittlänge — steigende Frequenz bei stabiler Länge deutet auf bessere Technik hin</div>
+        {economySeries.length >= 2 ? (
+          <>
+            <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                <Tooltip {...tipProps(dark)} />
+                <Line yAxisId="left" type="linear" dataKey="cadence" name="Schrittfrequenz (spm)" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
+                <Line yAxisId="right" type="linear" dataKey="stride" name="Schrittlänge (m)" stroke="#a855f7" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: "#a855f7" }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer></div>
+            <div className="flex gap-3 text-[10px] text-slate-500 mt-1">
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#0d9488" }} /> Schrittfrequenz</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#a855f7" }} /> Schrittlänge</span>
+            </div>
+          </>
+        ) : <div className="py-6 text-center text-xs text-slate-400">Noch keine Kadenz-Daten — importiere Garmin-Läufe mit Schrittfrequenz.</div>}
+      </Card>
+
+      {/* V3: Pace-HF-Verhältnis (ersetzt den alten Effizienz-Score) */}
+      <Card className="p-4">
+        <Eyebrow color="#0d9488">Pace-HF-Verhältnis</Eyebrow>
+        <div className="text-[10px] text-slate-400 mt-1 mb-2">Meter pro Herzschlag bei ruhigen Läufen — steigt die Linie, läufst du dieselbe Pace mit weniger Puls</div>
+        {efSeries.length >= 2 ? (
+          <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
+            <LineChart data={efSeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
+              <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipProps(dark)} />
+              <Line type="linear" dataKey="ef" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-6 text-center text-xs text-slate-400">Braucht mind. 2 ruhige Läufe (Easy/Lang/Tempo) mit Herzfrequenz aus dem Import.</div>}
+        <div className="mt-2"><InfoToggle label="Wie lese ich das?">Berechnet aus Ø-Pace und Ø-Puls ruhiger Läufe; bei Tempo zählt nur der Tempo-Block. Hitze, Hügel und Schlafmangel drücken den Wert kurzfristig — die Richtung über Wochen zählt.</InfoToggle></div>
+      </Card>
+
+      {/* V3: VO2max-Schätzung */}
+      <Card className="p-4">
+        <div className="flex items-baseline justify-between">
+          <Eyebrow color="#6366f1">VO₂max-Schätzung</Eyebrow>
+          {vo2Now && <span className="font-num font-bold text-slate-800">{vo2Now} <span className="text-[10px] text-slate-400 font-medium">ml/kg/min {vo2Arrow}</span></span>}
+        </div>
+        {vo2Series.length >= 2 ? (
+          <div className="mt-1" style={{ width: "100%", height: 150 }}><ResponsiveContainer>
+            <LineChart data={vo2Series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} tickFormatter={(v) => Math.round(v)} />
+              <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipProps(dark)} />
+              <Line type="linear" dataKey="est" stroke="none" dot={{ r: 2.5, fill: dark ? "#818cf8" : "#a5b4fc" }} isAnimationActive={false} />
+              <Line type="linear" dataKey="trend" stroke="#6366f1" strokeWidth={2.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-6 text-center text-xs text-slate-400 mt-1">Braucht mind. 2 ruhige Läufe mit Herzfrequenz aus dem Import.</div>}
+        <div className="mt-2"><InfoToggle label="Wie wird das geschätzt?">Aus Pace und Ø-Puls ruhiger Läufe (ACSM-Laufformel + Swain-Umrechnung), HFmax nach Tanaka ≈ {hrMax}. Punkte = Einzelläufe, Linie = geglätteter Trend (Median über 5). Es bleibt eine Schätzung mit Streuung — die Tendenz zählt, nicht die Kommastelle. Intervalle fließen wegen HF-Trägheit nicht ein; Garmins eigene Zahl kann abweichen.</InfoToggle></div>
+      </Card>
+
+      {list.length > 0 && <Card className="divide-y divide-slate-100">{list.map((r) => {
+        const hasLaps = r.laps && r.laps.length > 1;
+        const hasBadges = r.hrAvg || r.cadence || (r.elevGain != null && r.elevGain > 0) || r.calories;
+        const isOpen = openRun === r.id;
+        return (
+          <div key={r.id}>
+            <div className="flex items-center gap-3 px-4 py-2.5">
+              <span className="text-[11px] text-slate-400 font-num w-12 shrink-0">{fmtISOshort(r.date)}</span>
+              <span className="text-xs font-semibold text-slate-700 w-20 shrink-0">{RUN_TYPE[r.type].label}{pbIds.has(r.id) && <span className="ml-1 text-[9px] font-bold text-amber-500 align-top">PB</span>}{r.imported && <span className="block text-[9px] font-medium text-indigo-400">Garmin</span>}{(() => { const ep = effectivePace(r); return Math.round(ep) !== Math.round(r.pace) ? <span className="block text-[9px] font-medium text-teal-600 font-num">Arbeit {secToMMSS(Math.round(ep))}/km</span> : null; })()}</span>
+              <span className="font-num text-sm text-slate-800">{r.dist} km · {secToMMSS(r.sec)}</span>
+              <span className="font-num text-xs text-indigo-600 ml-auto">{secToMMSS(r.pace)}/km</span>
+              {hasLaps && <button onClick={() => setOpenRun(isOpen ? null : r.id)} className="text-slate-400 p-1 shrink-0"><ChevronDown size={14} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
+              <button onClick={() => remove(r.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
+            </div>
+            {hasBadges && (
+              <div className="flex flex-wrap gap-1.5 px-4 pb-2 -mt-1">
+                {r.hrAvg && <MiniBadge icon={<HeartPulse size={10} />} text={`Ø ${r.hrAvg} bpm`} color="#e11d48" />}
+                {r.cadence && <MiniBadge text={`${r.cadence} spm`} color="#0d9488" />}
+                {r.elevGain != null && r.elevGain > 0 && <MiniBadge icon={<Mountain size={10} />} text={`+${r.elevGain} m`} color="#78350f" />}
+                {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
+              </div>
+            )}
+            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} />}
+          </div>
+        );
+      })}</Card>}
+      <UndoToast undo={undo} onUndo={doUndo} />
+    </div>
+  );
+}
+function StrengthProgress({ data, setData }) {
+  const dark = useDark();
+  const names = useMemo(() => [...new Set(data.strengthLog.map((s) => s.exercise))], [data.strengthLog]);
+  const [view, setView] = useState("");
+  const [form, setForm] = useState({ date: todayISO(), exercise: "", weight: "", reps: "", sets: "" });
+  useEffect(() => { if (!view && names.length) setView(names[0]); }, [names, view]);
+  const add = () => { if (!form.exercise.trim()) return; setData((d) => ({ ...d, strengthLog: [...d.strengthLog, { id: uid(), date: form.date, exercise: form.exercise.trim(), weight: Number(form.weight) || 0, reps: Number(form.reps) || 0, sets: Number(form.sets) || 0 }] })); setForm({ ...form, weight: "", reps: "" }); };
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const remove = (id) => {
+    const item = data.strengthLog.find((s) => s.id === id);
+    setData((d) => ({ ...d, strengthLog: d.strengthLog.filter((s) => s.id !== id) }));
+    if (item) triggerUndo("Eintrag", "strengthLog", item);
+  };
+  const unitOf = (name) => (/sprung|jump/i.test(name || "") ? "cm" : "kg"); // 2.0: Sprunghöhe in cm statt kg
+  const series = useMemo(() => data.strengthLog.filter((s) => s.exercise === view && s.weight > 0).sort((a, b) => a.date.localeCompare(b.date)).map((s) => ({ date: fmtISOshort(s.date), weight: s.weight })), [data.strengthLog, view]);
+  const list = [...data.strengthLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+  return (
+    <div className="space-y-4">
+      <Card className="p-4" style={panel(dark, "#059669", "#ecfdf5", "#a7f3d0")}>
+        <div className="flex items-start gap-2"><Info size={15} className="text-emerald-500 mt-0.5 shrink-0" /><p className="text-xs text-emerald-900 leading-relaxed"><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">{BASELINE.map((b) => <button key={b} onClick={() => setForm({ ...form, exercise: b.replace(/\s*\(.*\)/, "") })} className="rounded-full bg-white border border-emerald-200 px-2.5 py-1 text-[11px] font-medium text-emerald-700">{b}</button>)}</div>
+      </Card>
+      <Card className="p-4"><Eyebrow>Satz eintragen</Eyebrow>
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
+          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input col-span-2" />
+          <input list="ex-list" placeholder="Übung" value={form.exercise} onChange={(e) => setForm({ ...form, exercise: e.target.value })} className="tc-input col-span-2" />
+          <datalist id="ex-list">{["Kniebeuge", "Kreuzheben", "Bankdrücken", "Klimmzüge", "Schulterdrücken", "Rudern", ...names].map((n) => <option key={n} value={n} />)}</datalist>
+          <input inputMode="decimal" placeholder="kg" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} className="tc-input font-num" />
+          <input inputMode="numeric" placeholder="Wdh." value={form.reps} onChange={(e) => setForm({ ...form, reps: e.target.value })} className="tc-input font-num" />
+          <input inputMode="numeric" placeholder="Sätze" value={form.sets} onChange={(e) => setForm({ ...form, sets: e.target.value })} className="tc-input font-num col-span-2" />
+        </div>
+        <button onClick={add} className="mt-3 w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
+      </Card>
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2"><Eyebrow>Gewichtsverlauf</Eyebrow>{names.length > 0 && <select value={view} onChange={(e) => setView(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" style={{ maxWidth: 150 }}>{names.map((n) => <option key={n} value={n}>{n}</option>)}</select>}</div>
+        {series.length >= 2 ? (
+          <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
+            <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
+              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipProps(dark)} />
+              <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Übung für den Verlauf.</div>}
+      </Card>
+      {list.length > 0 && <Card className="divide-y divide-slate-100">{list.map((s) => (
+        <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
+          <span className="text-[11px] text-slate-400 font-num w-12 shrink-0">{fmtISOshort(s.date)}</span>
+          <span className="text-xs font-semibold text-slate-700 truncate flex-1">{s.exercise}</span>
+          <span className="font-num text-sm text-slate-800 shrink-0">{s.weight ? `${s.weight} ${unitOf(s.exercise)}` : ""}{(s.sets || s.reps) ? `  ${s.sets || "?"}×${s.reps || "?"}` : ""}</span>
+          <button onClick={() => remove(s.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
+        </div>
+      ))}</Card>}
+      <UndoToast undo={undo} onUndo={doUndo} />
+    </div>
+  );
+}
+
+function SyncCard({ data, setData, savedAt, onRefresh, refreshing }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState(null);
+  const fileRef = useRef(null);
+
+  const doExport = () => {
+    const json = buildBackupPayload(data);
+    const downloaded = downloadBackup(json);
+    setText(json);
+    let copied = false;
+    try { if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(json); copied = true; } } catch (_) {}
+    setMsg({ ok: true, text: (downloaded ? "Datei heruntergeladen" : "Datei-Download nicht möglich") + (copied ? " und in die Zwischenablage kopiert." : ".") + " Auf dem anderen Gerät unten bei „Importieren“ einfügen oder die Datei öffnen." });
+    setOpen(true);
+  };
+  const doImportText = () => {
+    try {
+      const parsed = JSON.parse(text);
+      const incoming = parsed && parsed.data ? parsed.data : parsed;
+      if (!incoming || typeof incoming !== "object") throw new Error("ungültig");
+      setData({ ...DEFAULT_DATA, ...incoming });
+      setMsg({ ok: true, text: "Daten übernommen — dieses Gerät ist jetzt auf dem importierten Stand." });
+      setText("");
+    } catch (_) { setMsg({ ok: false, text: "Konnte den Text nicht als Sicherung lesen. Bitte den vollständigen Export-Text/-Datei verwenden." }); }
+  };
+  const handleFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setText(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        <Eyebrow>Geräteübergreifend nutzen</Eyebrow>
+        {savedAt && <span className="text-[10px] text-slate-400 font-num shrink-0">gespeichert {savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>}
+      </div>
+      <p className="text-xs text-slate-500 leading-relaxed mt-1.5">
+        Deine Daten werden automatisch mit deinem Claude-Konto gespeichert — auf iPhone und iPad mit demselben Konto (und derselben Unterhaltung) siehst du in der Regel denselben Stand. Falls nicht, überträgst du hier per Sicherungsdatei/-text geräteunabhängig.
+      </p>
+      <div className="mt-3 flex gap-2">
+        <button onClick={onRefresh} disabled={refreshing} className="flex-1 rounded-xl bg-slate-100 text-slate-700 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"><RefreshCw size={13} className={refreshing ? "animate-spin" : ""} /> Aktualisieren</button>
+        <button onClick={doExport} className="flex-1 rounded-xl bg-indigo-600 text-white py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Download size={13} /> Exportieren</button>
+        <button onClick={() => setOpen((o) => !o)} className="flex-1 rounded-xl bg-slate-100 text-slate-700 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Upload size={13} /> Importieren</button>
+      </div>
+      {msg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${msg.ok ? "bg-teal-100 text-teal-800" : "bg-rose-100 text-rose-700"}`}>{msg.text}</div>}
+      {open && (
+        <div className="mt-3 space-y-2">
+          <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files?.[0]); e.target.value = ""; }} />
+          <button onClick={() => fileRef.current?.click()} className="w-full rounded-xl border-2 border-dashed border-slate-300 py-2.5 text-xs font-semibold text-slate-600 flex items-center justify-center gap-1.5"><Upload size={13} /> Sicherungsdatei wählen</button>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="…oder Sicherungstext hier einfügen (vom anderen Gerät kopiert)" className="tc-input font-num" style={{ fontSize: 11 }} />
+          <button onClick={doImportText} className="w-full rounded-xl bg-teal-600 text-white py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Copy size={13} /> Text übernehmen</button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ===================== RECOVERY ===================== */
+function Scale({ value, onChange, color }) {
+  const dark = useDark();
+  return (
+    <div className="flex gap-1.5">{[1, 2, 3, 4, 5].map((n) => (
+      <button key={n} onClick={() => onChange(n)} className="flex-1 h-9 rounded-lg text-sm font-semibold font-num border transition" style={value === n ? { background: color, color: "#fff", borderColor: color } : (dark ? { background: "#141d2c", color: "#8ea0b5", borderColor: "#31405c" } : { background: "#fff", color: "#94a3b8", borderColor: "#e2e8f0" })}>{n}</button>
+    ))}</div>
+  );
+}
+function RecoveryTab({ data, setData, currentWeek }) {
+  const dark = useDark();
+  const [form, setForm] = useState({ date: todayISO(), sleep: "", readiness: 0, soreness: 0, note: "", napMin: "", napTime: "frueh_nachmittag", napFeeling: "neutral" });
+  const save = () => {
+    if (!form.sleep && !form.readiness && !form.napMin) return;
+    const hasNap = Number(form.napMin) > 0;
+    const entry = {
+      id: uid(), date: form.date,
+      sleep: Number(String(form.sleep).replace(",", ".")) || 0,
+      readiness: form.readiness || 3,
+      soreness: form.soreness || 0,
+      note: form.note.trim(),
+      ...(hasNap ? { napMin: Number(form.napMin), napTime: form.napTime, napFeeling: form.napFeeling } : {}),
+    };
+    setData((d) => ({ ...d, recoveryLog: [...d.recoveryLog.filter((r) => r.date !== form.date), entry] }));
+    setForm({ date: todayISO(), sleep: "", readiness: 0, soreness: 0, note: "", napMin: "", napTime: "frueh_nachmittag", napFeeling: "neutral" });
+  };
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const remove = (id) => {
+    const item = data.recoveryLog.find((r) => r.id === id);
+    setData((d) => ({ ...d, recoveryLog: d.recoveryLog.filter((r) => r.id !== id) }));
+    if (item) triggerUndo("Check-in", "recoveryLog", item);
+  };
+  const sorted = [...data.recoveryLog].sort((a, b) => a.date.localeCompare(b.date));
+  const recents = [...sorted].reverse();
+  const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
+  const latest = recents[0];
+  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots);
+  const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
+  const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
+  const sleepSeries = sorted.slice(-14).map((r) => ({ date: fmtISOshort(r.date), sleep: r.sleep }));
+  const tWeek = planWeekOf(TOURNAMENT);
+  const weekDays = useMemo(() => {
+    const monday = mondayOfWeek(currentWeek);
+    return buildWeekPlan(currentWeek, undefined, data.vbSlots).map((d, i) => {
+      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid] })) };
+      ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Open"] = 0; });
+      row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : "Open")] += it.load; });
+      return row;
+    });
+  }, [currentWeek, data.vbSlots, data.done]);
+  const meso = Array.from({ length: TOTAL_WEEKS }, (_, i) => {
+    const w = i + 1;
+    const bySport = weekLoadBySport(w, data.vbSlots);
+    // Erledigt je Sportart — nur für vergangene/aktuelle Wochen; Zukunft = reiner Plan (alles "offen")
+    const doneBy = { vb: 0, run: 0, strength: 0 };
+    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots).forEach((d) => d.items.forEach((it) => { if (data.done[it.uid] && doneBy[it.sport] != null) doneBy[it.sport] += it.load || 0; }));
+    const row = { w: `${w}`, current: w === currentWeek, future: w > currentWeek, kind: w >= TOTAL_WEEKS ? "Testwoche" : weekMeta(w).hasT ? "Turnierwoche" : REGEN[w] ? "Regeneration" : "regulär" };
+    ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = Math.min(doneBy[s], bySport[s]); row[s + "Open"] = Math.max(bySport[s] - doneBy[s], 0); row[s + "Plan"] = bySport[s]; });
+    return row;
+  });
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4" style={{ background: dark ? status.color + "21" : status.tint, borderColor: status.color + "55" }}>
+        <Eyebrow color={dark ? status.bright : status.color}>Belastungs-Ampel</Eyebrow>
+        <div className="mt-1.5 flex items-center gap-3">
+          <div className="h-3 w-3 rounded-full shrink-0" style={{ background: dark ? status.bright : status.color }} />
+          <div className="font-display font-bold flex items-center gap-1.5 flex-wrap" style={{ color: dark ? status.bright : status.color }}>{status.label}{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
+        </div>
+        <p className="text-xs mt-1.5 leading-relaxed" style={{ color: dark ? status.bright : status.color }}>{status.hint}</p>
+        <div className="mt-2.5 flex gap-2 text-[11px]"><span className="rounded-lg bg-white/70 px-2 py-1 font-num text-slate-700">Geplante Belastung Wo. {currentWeek}: ⚡{weekLoad}</span>{avgSleep && <span className="rounded-lg bg-white/70 px-2 py-1 font-num text-slate-700">Schlaf-Ø {avgSleep.toFixed(1)} h</span>}</div>
+        <div className="mt-2"><LoadHelp /></div>
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow>Täglicher Check-in</Eyebrow>
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-2 gap-2.5">
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input" />
+            <input inputMode="decimal" placeholder="Schlaf (h)" value={form.sleep} onChange={(e) => setForm({ ...form, sleep: e.target.value })} className="tc-input font-num" />
+          </div>
+          <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Wie fühlst du dich? (1 müde – 5 top)</div><Scale value={form.readiness} onChange={(v) => setForm({ ...form, readiness: v })} color="#0d9488" /></div>
+          <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Muskelkater (1 keiner – 5 stark)</div><Scale value={form.soreness} onChange={(v) => setForm({ ...form, soreness: v })} color="#f59e0b" /></div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Nap (optional, Minuten)</div>
+            <input inputMode="numeric" placeholder="z. B. 20" value={form.napMin} onChange={(e) => setForm({ ...form, napMin: e.target.value })} className="tc-input font-num" />
+          </div>
+          {Number(form.napMin) > 0 && (
+            <div className="rounded-xl bg-slate-100 p-2.5 space-y-2.5">
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Wann?</div>
+                <div className="flex gap-1.5">{NAP_TIMES.map(([v, l]) => (
+                  <button key={v} onClick={() => setForm({ ...form, napTime: v })} className={`flex-1 rounded-lg px-1.5 py-2 text-[10.5px] font-semibold border transition ${form.napTime === v ? "bg-violet-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+                ))}</div>
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Wie gefühlt?</div>
+                <div className="flex gap-1.5">{NAP_FEELINGS.map(([v, l]) => (
+                  <button key={v} onClick={() => setForm({ ...form, napFeeling: v })} className={`flex-1 rounded-lg px-1.5 py-2 text-[10.5px] font-semibold border transition ${form.napFeeling === v ? "bg-violet-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+                ))}</div>
+              </div>
+              {form.napTime === "spaet_nachmittag" && <div className="text-[10.5px] text-amber-700 leading-relaxed">⚠️ Später Nap kann den Nachtschlaf stören — für heute ok, aber nicht zur Gewohnheit werden lassen.</div>}
+              <NapHelp />
+            </div>
+          )}
+          <input placeholder="Notiz (optional)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input" />
+          <button onClick={save} className="w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Check-in speichern</button>
+        </div>
+      </Card>
+
+      <Card className="p-4" style={panel(dark, "#14b8a6", "#f0fdfa", "#99f6e4")}>
+        <div className="flex items-start gap-2"><Moon size={16} className="text-teal-600 mt-0.5 shrink-0" />
+          <div className="text-xs text-teal-900 leading-relaxed">
+            <b>Schlaf-Fokus.</b> Aktuell schläfst du oft unter 6 h — das ist dein größter Bremsklotz bei viel Training. Mit 3 Sportarten braucht dein Körper 8–9 h, sonst leiden Anpassung, Sprungkraft und Verletzungsrisiko. <b>Wenig geschlafen?</b> Streiche zuerst die optionale Krafteinheit und halte die harten Läufe locker — eher als sie hart durchzuziehen.
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow>Schlaf-Verlauf</Eyebrow>
+        {sleepSeries.length >= 2 ? (
+          <div className="mt-2" style={{ width: "100%", height: 170 }}><ResponsiveContainer>
+            <LineChart data={sleepSeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
+              <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipProps(dark)} />
+              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, "below")} />
+              <Line type="linear" dataKey="sleep" stroke="#14b8a6" strokeWidth={2.5} dot={{ r: 3, fill: "#14b8a6" }} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Check-ins für den Verlauf.</div>}
+      </Card>
+
+      {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
+      <Card className="p-4">
+        <Eyebrow>Diese Woche: Plan vs. Ist (Woche {currentWeek})</Eyebrow>
+        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · blass = offen · Umrandung = heute</div>
+        <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
+          <ComposedChart data={weekDays} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
+            <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={30} allowDecimals={false} />
+            <Tooltip {...tipProps(dark)} cursor={{ fill: dark ? "#ffffff08" : "#00000006" }} content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const d = payload[0].payload;
+              return (
+                <div style={{ ...tipStyle(dark, 11), padding: "7px 10px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
+                  {d.list.length ? d.list.map((it, i) => (
+                    <div key={i} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
+                      <span style={{ color: safeText(dark, SPORT[it.sport].color) }}>{it.done ? "✓" : "○"}</span> {it.label} ⚡{it.load}{it.done ? "" : " · offen"}
+                    </div>
+                  )) : <div style={{ color: dark ? "#94a3b8" : "#64748b" }}>Ruhetag</div>}
+                </div>
+              );
+            }} />
+            {["vb", "run", "strength"].flatMap((s, si) => [
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
+            ])}
+          </ComposedChart>
+        </ResponsiveContainer></div>
+      </Card>
+
+      {/* Wochenbelastung: je Sportart satt = erledigt, blass = offen/geplant */}
+      <Card className="p-4">
+        <Eyebrow>Wochenbelastung: Plan vs. Ist (Mesozyklus)</Eyebrow>
+        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · blass = offen/geplant · Umrandung = aktuelle Woche</div>
+        <div style={{ width: "100%", height: 170 }}><ResponsiveContainer>
+          <ComposedChart data={meso} margin={{ top: 20, right: 4, left: -4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
+            <XAxis dataKey="w" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={0} />
+            <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+            <Tooltip {...tipProps(dark)} content={({ active, payload, label }) => {
+              if (!active || !payload || !payload.length) return null;
+              const m = payload[0].payload;
+              return (
+                <div style={{ ...tipStyle(dark, 11), padding: "7px 10px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>Woche {label} · {m.kind}</div>
+                  {["vb", "run", "strength"].map((s) => m[s + "Plan"] > 0 && (
+                    <div key={s} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
+                      <span style={{ color: safeText(dark, SPORT[s].color), fontWeight: 600 }}>{SPORT[s].label}:</span> {m.future ? `⚡${m[s + "Plan"]} geplant` : `${m[s + "Done"]} von ${m[s + "Plan"]} ⚡`}
+                    </div>
+                  ))}
+                </div>
+              );
+            }} />
+            <ReferenceLine x={`${tWeek}`} stroke="#f59e0b" strokeDasharray="4 4" label={chipLabel("Turnier", "#b45309", dark, "vtop")} />
+            {["vb", "run", "strength"].flatMap((s, si) => [
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
+            ])}
+          </ComposedChart>
+        </ResponsiveContainer></div>
+        <div className="flex flex-wrap gap-2.5 text-[10px] text-slate-500 mt-1">
+          {["vb", "run", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.3 }} /> offen</span>
+        </div>
+        <div className="mt-2"><LoadHelp /></div>
+      </Card>
+
+      {recents.length > 0 && (
+        <div><Eyebrow>Letzte Check-ins</Eyebrow>
+          <Card className="mt-2 divide-y divide-slate-100">{recents.slice(0, 8).map((r) => (
+            <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+              <span className="text-[11px] text-slate-400 font-num w-12 shrink-0">{fmtISOshort(r.date)}</span>
+              <span className="font-num text-sm text-slate-800 shrink-0">{r.sleep}h</span>
+              <span className="text-[11px] text-slate-500 shrink-0">Form {r.readiness}/5</span>
+              {r.napMin ? <span className="text-[11px] text-violet-500 shrink-0 font-num">😴{r.napMin}m</span> : null}
+              {r.note && <span className="text-[11px] text-slate-400 truncate flex-1">{r.note}</span>}
+              <button onClick={() => remove(r.id)} className="text-slate-300 ml-auto shrink-0"><Trash2 size={14} /></button>
+            </div>
+          ))}</Card>
+        </div>
+      )}
+      <UndoToast undo={undo} onUndo={doUndo} />
+    </div>
+  );
+}
+
+/* ===================== V3: ERNÄHRUNG — UI ===================== */
+function NutritionProfileForm({ initial, onSave, submitLabel }) {
+  const [f, setF] = useState({ ...NUT_DEFAULT.profile, ...initial });
+  const plan = kcalPlan(f);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const Btn = ({ active, onClick, children, sub }) => (
+    <button onClick={onClick} className={`flex-1 rounded-xl px-2 py-2 text-[11px] font-semibold border transition ${active ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>
+      <div>{children}</div>{sub && <div className={`text-[9px] font-medium mt-0.5 ${active ? "text-indigo-200" : "text-slate-400"}`}>{sub}</div>}
+    </button>
+  );
+  return (
+    <div className="space-y-3.5">
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Geschlecht (für die Formel)</div>
+        <div className="flex gap-1.5">{[["m", "männlich"], ["w", "weiblich"]].map(([v, l]) => <Btn key={v} active={f.sex === v} onClick={() => set("sex", v)}>{l}</Btn>)}</div>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {[["age", "Alter", "Jahre"], ["height", "Größe", "cm"], ["weight", "Gewicht", "kg"]].map(([k, l, u]) => (
+          <div key={k}><div className="text-[11px] font-semibold text-slate-500 mb-1.5">{l} <span className="text-slate-400 font-normal">({u})</span></div><input inputMode="decimal" value={f[k]} onChange={(e) => set(k, e.target.value)} className="tc-input font-num" /></div>
+        ))}
+      </div>
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Alltagsaktivität (ohne Training — das wird separat angerechnet)</div>
+        <div className="flex gap-1.5">{ACTIVITY_LEVELS.map(([v, l, sub]) => <Btn key={v} active={f.activity === v} onClick={() => set("activity", v)} sub={sub}>{l}</Btn>)}</div>
+      </div>
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Ziel</div>
+        <div className="flex gap-1.5">{[["cut", "Abnehmen"], ["maintain", "Halten"], ["gain", "Aufbauen"]].map(([v, l]) => <Btn key={v} active={f.goal === v} onClick={() => set("goal", v)}>{l}</Btn>)}</div>
+      </div>
+      {f.goal !== "maintain" && (
+        <div>
+          <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Tempo ({f.goal === "cut" ? "kg weniger" : "kg mehr"} pro Woche)</div>
+          <div className="flex gap-1.5">{(f.goal === "cut" ? [0.25, 0.5, 0.75] : [0.25, 0.5]).map((v) => <Btn key={v} active={parseNum(f.rate) === v} onClick={() => set("rate", v)}>{String(v).replace(".", ",")} kg</Btn>)}</div>
+          {f.goal === "cut" && parseNum(f.rate) >= 0.75 && <div className="text-[10.5px] text-amber-700 mt-1.5 leading-relaxed">0,75 kg/Woche ist mit 3 Sportarten sehr ambitioniert — 0,5 ist meist der bessere Deal zwischen Fortschritt und Trainingsqualität.</div>}
+        </div>
+      )}
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Trainings-kcal anrechnen (Garmin-Läufe & manuelle Aktivität)</div>
+        <div className="flex gap-1.5">{[[0, "0 %", "konservativ"], [50, "50 %", "empfohlen"], [100, "100 %", "voll"]].map(([v, l, sub]) => <Btn key={v} active={parseNum(f.addBack) === v} onClick={() => set("addBack", v)} sub={sub}>{l}</Btn>)}</div>
+      </div>
+      <div>
+        <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Zielgewicht <span className="text-slate-400 font-normal">(optional, kg)</span></div>
+        <input inputMode="decimal" value={f.goalWeight} onChange={(e) => set("goalWeight", e.target.value)} className="tc-input font-num" placeholder="z. B. 72" />
+      </div>
+      {plan ? (
+        <div className="rounded-xl bg-slate-100 p-3 space-y-1">
+          <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Dein Plan</div>
+          <div className="flex items-baseline gap-2"><span className="font-num text-2xl font-bold text-slate-900">{plan.target}</span><span className="text-[11px] text-slate-500">kcal/Tag {plan.delta ? `(${plan.delta > 0 ? "+" : ""}${plan.delta})` : "(Erhalt)"}</span></div>
+          <div className="text-[10.5px] text-slate-500 font-num">Grundumsatz {plan.bmr} · Alltagsverbrauch {plan.tdee}{plan.calibrated ? " (kalibriert)" : ""} · an Trainingstagen automatisch mehr</div>
+          {plan.belowFloor && <div className="text-[10.5px] text-amber-700 leading-relaxed">Ziel auf die Untergrenze {plan.floor} kcal angehoben — schneller abzunehmen würde Training & Gesundheit untergraben.</div>}
+          {plan.calibrated && <button onClick={() => set("tdeeManual", null)} className="text-[10px] font-semibold text-slate-400 underline">Kalibrierung zurücksetzen (zurück zur Formel)</button>}
+        </div>
+      ) : <div className="rounded-xl bg-slate-100 p-3 text-[11px] text-slate-500">Alter, Größe und Gewicht eintragen — dann erscheint hier dein berechnetes Tagesziel.</div>}
+      <button onClick={() => plan && onSave(f)} disabled={!plan} className="w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold disabled:opacity-40">{submitLabel}</button>
+    </div>
+  );
+}
+function NutritionTab({ data, setData, plan }) {
+  const dark = useDark();
+  const nut = { ...NUT_DEFAULT, ...(data.nutrition || {}), profile: { ...NUT_DEFAULT.profile, ...((data.nutrition || {}).profile || {}) } };
+  const kplan = kcalPlan(nut.profile);
+  const saveProfile = (profile) => setData((d) => {
+    const cur = { ...NUT_DEFAULT, ...(d.nutrition || {}) };
+    const seed = (!cur.weightLog || !cur.weightLog.length) && parseNum(profile.weight) ? [{ id: uid(), date: todayISO(), kg: parseNum(profile.weight) }] : [];
+    return { ...d, nutrition: { ...cur, profile, setup: true, weightLog: [...(cur.weightLog || []), ...seed] } };
+  });
+
+  const [entry, setEntry] = useState({ date: todayISO(), kcal: "", label: "", kind: "in", tag: "", savePreset: false });
+  const [editPresets, setEditPresets] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [wInput, setWInput] = useState("");
+  const [undoN, setUndoN] = useState(null);
+  const undoTimer = useRef(null);
+  const pushUndo = (label, restore) => { setUndoN({ label, restore }); clearTimeout(undoTimer.current); undoTimer.current = setTimeout(() => setUndoN(null), 6000); };
+
+  const sums = (d) => {
+    const es = nut.intake.filter((e) => e.date === d);
+    const inn = es.filter((e) => e.kind !== "out").reduce((s, e) => s + e.kcal, 0);
+    const outM = es.filter((e) => e.kind === "out").reduce((s, e) => s + e.kcal, 0);
+    const outG = garminKcalOn(data.runLog, d);
+    return { inn, out: outM + outG, outG };
+  };
+  const targetOn = (d) => (kplan ? Math.round(kplan.target + (parseNum(nut.profile.addBack) / 100) * sums(d).out) : 0);
+
+  if (!nut.setup || !kplan) return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <Eyebrow color="#0d9488">Ernährung einrichten</Eyebrow>
+        <p className="text-xs text-slate-500 leading-relaxed mt-1.5">Nur Kalorien, kein Lebensmittel-Tracking: Du schätzt kcal pro Mahlzeit, die App rechnet Ziel, Training und Trend. <b>Konsistent grob schlägt selten genau</b> — Schätzwerte reichen völlig.</p>
+      </Card>
+      <Card className="p-4"><NutritionProfileForm initial={nut.profile} onSave={saveProfile} submitLabel="Plan berechnen & starten" /></Card>
+    </div>
+  );
+
+  const t = todayISO();
+  const ts = sums(t);
+  const targetToday = targetOn(t);
+  const rest = targetToday - ts.inn;
+  const pct = targetToday ? ts.inn / targetToday : 0;
+  const barColor = pct > 1.07 ? "#d97706" : pct >= 0.9 ? "#0d9488" : "#6366f1";
+  const todayKey = DAYS[(new Date().getDay() + 6) % 7];
+  const todayLoad = plan.find((dd) => dd.day === todayKey)?.load || 0;
+
+  const addEntry = () => {
+    const k = Math.round(parseNum(entry.kcal)); if (!k) return;
+    const e = { id: uid(), date: entry.date, kcal: k, kind: entry.kind, label: (entry.label || entry.tag || (entry.kind === "out" ? "Aktivität" : "Essen")).trim() };
+    setData((d) => { const cur = d.nutrition; const presets = entry.savePreset ? [...cur.presets.filter((p) => !(p.label === e.label && p.kind === e.kind)), { id: uid(), label: e.label, kcal: k, kind: e.kind }].slice(-12) : cur.presets; return { ...d, nutrition: { ...cur, intake: [...cur.intake, e], presets } }; });
+    setEntry((en) => ({ ...en, kcal: "", label: "", savePreset: false }));
+  };
+  const removeEntry = (id) => { const it = nut.intake.find((x) => x.id === id); setData((d) => ({ ...d, nutrition: { ...d.nutrition, intake: d.nutrition.intake.filter((x) => x.id !== id) } })); if (it) pushUndo("Eintrag", () => setData((d) => ({ ...d, nutrition: { ...d.nutrition, intake: [...d.nutrition.intake, it] } }))); };
+  const removePreset = (id) => setData((d) => ({ ...d, nutrition: { ...d.nutrition, presets: d.nutrition.presets.filter((p) => p.id !== id) } }));
+  const addWeight = () => { const kg = parseNum(wInput); if (!kg) return; setData((d) => ({ ...d, nutrition: { ...d.nutrition, weightLog: [...d.nutrition.weightLog.filter((w) => w.date !== t), { id: uid(), date: t, kg }], profile: { ...d.nutrition.profile, weight: String(kg) } } })); setWInput(""); };
+  const removeWeight = (id) => { const it = nut.weightLog.find((x) => x.id === id); setData((d) => ({ ...d, nutrition: { ...d.nutrition, weightLog: d.nutrition.weightLog.filter((x) => x.id !== id) } })); if (it) pushUndo("Wiegung", () => setData((d) => ({ ...d, nutrition: { ...d.nutrition, weightLog: [...d.nutrition.weightLog, it] } }))); };
+
+  const dayEntries = nut.intake.filter((e) => e.date === entry.date);
+  const days14 = lastNDates(14).map((d) => { const s = sums(d); return { date: fmtISOshort(d), in: s.inn, target: targetOn(d) }; });
+  let streakN = 0; { let d = t; if (!sums(d).inn) d = isoAddDays(d, -1); while (sums(d).inn > 0) { streakN++; d = isoAddDays(d, -1); } }
+  const last7 = lastNDates(7);
+  const hit7 = last7.filter((d) => { const s = sums(d); if (!s.inn) return false; const tg = targetOn(d); return Math.abs(s.inn - tg) <= 0.1 * tg; }).length;
+  const logged7 = last7.map((d) => sums(d).inn).filter((v) => v > 0);
+  const avg7 = logged7.length ? Math.round(logged7.reduce((a, b) => a + b, 0) / logged7.length) : null;
+  const now = new Date(); const mo = new Date(now); mo.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const weekIso = Array.from({ length: 7 }, (_, i) => { const d = new Date(mo); d.setDate(mo.getDate() + i); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+  const weekBudget = weekIso.reduce((s, d) => s + (d <= t ? targetOn(d) : kplan.target), 0) - weekIso.reduce((s, d) => s + sums(d).inn, 0);
+  const wSorted = [...nut.weightLog].sort((a, b) => a.date.localeCompare(b.date));
+  const wMa = ma7w(wSorted);
+  const wChart = wMa.slice(-30).map((w) => ({ date: fmtISOshort(w.date), kg: w.kg, ma: w.ma }));
+  let wTrend = null;
+  if (wMa.length >= 2) { const span = (new Date(wMa[wMa.length - 1].date) - new Date(wMa[0].date)) / DAY_MS; if (span >= 8) wTrend = Math.round(((wMa[wMa.length - 1].ma - wMa[0].ma) / span) * 7 * 100) / 100; }
+  // Realitäts-Check: echten Tagesverbrauch aus Essen + Gewichtsverlauf schätzen (21-Tage-Fenster)
+  const win21 = lastNDates(21);
+  const logDays = win21.filter((d) => sums(d).inn > 0);
+  const wIn = wSorted.filter((w) => w.date >= win21[0]);
+  let reality = null;
+  if (logDays.length >= 12 && wIn.length >= 5) {
+    const span = (new Date(wIn[wIn.length - 1].date) - new Date(wIn[0].date)) / DAY_MS;
+    if (span >= 14) {
+      const avgIn = Math.round(win21.reduce((s, d) => s + sums(d).inn, 0) / logDays.length);
+      const maW = ma7w(wIn); const dKg = maW[maW.length - 1].ma - maW[0].ma;
+      const est = Math.round(avgIn - (dKg * 7700) / span);
+      if (est >= 1200 && est <= 6000) reality = { est, avgIn, dKg: Math.round(dKg * 10) / 10, span: Math.round(span), days: logDays.length };
+    }
+  }
+  const need = reality ? null : { days: Math.max(0, 12 - logDays.length), weighs: Math.max(0, 5 - wIn.length) };
+  const applyTdee = () => reality && setData((d) => ({ ...d, nutrition: { ...d.nutrition, profile: { ...d.nutrition.profile, tdeeManual: reality.est } } }));
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4" style={{ background: barColor + (dark ? "21" : "12"), borderColor: barColor + "55" }}>
+        <div className="flex items-center justify-between"><Eyebrow color={barColor}>Heute</Eyebrow><span className="text-[10px] text-slate-400 font-num">Ziel {targetToday} kcal</span></div>
+        <div className="mt-1 flex items-baseline gap-2">
+          <span className="font-num text-3xl font-bold" style={{ color: safeText(dark, barColor) }}>{Math.abs(rest)}</span>
+          <span className="text-xs font-semibold" style={{ color: safeText(dark, barColor) }}>{rest >= 0 ? "kcal frei" : "kcal drüber"}</span>
+        </div>
+        <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ background: dark ? "#26334a" : "#e2e8f0" }}><div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, Math.round(pct * 100))}%`, background: barColor }} /></div>
+        <div className="mt-1.5 text-[10.5px] text-slate-500 font-num">Gegessen {ts.inn} · Training +{Math.round((parseNum(nut.profile.addBack) / 100) * ts.out)} angerechnet{ts.outG ? ` (Garmin ${ts.outG})` : ""}</div>
+        {kplan.belowFloor && <div className="text-[10.5px] text-amber-700 mt-1">Ziel liegt auf der Gesundheits-Untergrenze ({kplan.floor} kcal).</div>}
+        {nut.profile.goal === "cut" && todayLoad >= 8 && <div className="text-[10.5px] text-amber-700 mt-1">Heute ⚡{todayLoad} geplant — an harten Tagen lieber am oberen Rand essen, sonst leidet die Einheit.</div>}
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow>Eintragen</Eyebrow>
+        <div className="mt-2 flex gap-1.5">
+          {[["in", "🍽️ Gegessen"], ["out", "🔥 Verbraucht"]].map(([v, l]) => (
+            <button key={v} onClick={() => setEntry({ ...entry, kind: v, tag: "" })} className={`flex-1 rounded-xl py-2 text-[11px] font-semibold border transition ${entry.kind === v ? "bg-slate-900 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+          ))}
+        </div>
+        {nut.presets.filter((p) => p.kind === entry.kind).length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+            {nut.presets.filter((p) => p.kind === entry.kind).map((p) => (
+              <span key={p.id} className="inline-flex items-center gap-1">
+                <button onClick={() => setEntry({ ...entry, kcal: String(p.kcal), label: p.label })} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10.5px] font-semibold text-slate-600 font-num">{p.label} · {p.kcal}</button>
+                {editPresets && <button onClick={() => removePreset(p.id)} className="text-rose-500 text-[11px] font-bold px-0.5">✕</button>}
+              </span>
+            ))}
+            <button onClick={() => setEditPresets((e) => !e)} className="text-[10px] font-semibold text-slate-400 underline">{editPresets ? "fertig" : "bearbeiten"}</button>
+          </div>
+        )}
+        {entry.kind === "in" && <div className="mt-2 flex flex-wrap gap-1.5">{MEAL_TAGS.map((tg) => <button key={tg} onClick={() => setEntry({ ...entry, tag: entry.tag === tg ? "" : tg })} className={`rounded-full px-2.5 py-1 text-[10.5px] font-semibold border ${entry.tag === tg ? "bg-teal-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{tg}</button>)}</div>}
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <input type="date" value={entry.date} onChange={(e) => setEntry({ ...entry, date: e.target.value })} className="tc-input font-num" />
+          <input inputMode="numeric" placeholder="kcal" value={entry.kcal} onChange={(e) => setEntry({ ...entry, kcal: e.target.value })} className="tc-input font-num" />
+          <input placeholder="Was? (optional)" value={entry.label} onChange={(e) => setEntry({ ...entry, label: e.target.value })} className="tc-input" />
+        </div>
+        <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" checked={entry.savePreset} onChange={(e) => setEntry({ ...entry, savePreset: e.target.checked })} /> Als Schnellwahl speichern (z. B. „Schulmensa“)</label>
+        <button onClick={addEntry} className="mt-2.5 w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
+        {dayEntries.length > 0 && (
+          <div className="mt-3 divide-y divide-slate-100 border-t border-slate-200/70">
+            {dayEntries.map((e) => (
+              <div key={e.id} className="flex items-center gap-2.5 py-2">
+                <span className="text-xs text-slate-700 flex-1 truncate">{e.label}</span>
+                <span className={`font-num text-sm font-semibold shrink-0 ${e.kind === "out" ? "text-amber-700" : "text-slate-800"}`}>{e.kind === "out" ? "−" : "+"}{e.kcal}</span>
+                <button onClick={() => removeEntry(e.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow>Letzte 14 Tage</Eyebrow>
+        <div style={{ width: "100%", height: 150 }} className="mt-1"><ResponsiveContainer>
+          <ComposedChart data={days14} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={1} />
+            <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} />
+            <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipProps(dark)} />
+            <Bar dataKey="in" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={16} />
+            <Line type="stepAfter" dataKey="target" stroke={dark ? "#e2e8f0" : "#0f172a"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+          </ComposedChart>
+        </ResponsiveContainer></div>
+        <div className="mt-2 flex gap-2.5">
+          <Stat label="Streak" value={streakN} unit="Tage" accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
+          <Stat label="Ø 7 Tage" value={avg7 || "—"} unit={avg7 ? "kcal" : ""} accent="#6366f1" icon={<Utensils size={13} className="text-indigo-500" />} />
+          <Stat label="Im Ziel (7T)" value={`${hit7}/7`} accent="#0d9488" icon={<Check size={13} className="text-teal-600" />} />
+        </div>
+        <div className="mt-2 text-[10.5px] text-slate-500 font-num">Wochenbudget (Mo–So): {weekBudget >= 0 ? `noch ${weekBudget} kcal frei` : `${-weekBudget} kcal über Budget`}</div>
+        <div className="mt-2"><InfoToggle label="Wie zählt das Training?">Kalorien deiner Garmin-Läufe fließen am jeweiligen Tag automatisch als Verbrauch ein; Volleyball/Kraft kannst du oben als „Verbraucht“ schätzen. Angerechnet werden {parseNum(nut.profile.addBack)} % davon (im Profil änderbar) — 50 % ist der bewährte Mittelweg, weil Uhren-Kalorien oft zu hoch schätzen.</InfoToggle></div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-baseline justify-between"><Eyebrow color="#0d9488">Gewicht</Eyebrow>{wTrend != null && <span className="text-[10.5px] font-num text-slate-500">{wTrend > 0 ? "+" : ""}{wTrend} kg/Woche (Trend)</span>}</div>
+        <div className="mt-2 flex gap-2">
+          <input inputMode="decimal" placeholder="heute (kg)" value={wInput} onChange={(e) => setWInput(e.target.value)} className="tc-input font-num" />
+          <button onClick={addWeight} className="h-11 w-11 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
+        </div>
+        {wChart.length >= 2 ? (
+          <div style={{ width: "100%", height: 140 }} className="mt-2"><ResponsiveContainer>
+            <LineChart data={wChart} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+              <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
+              <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipProps(dark)} />
+              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, "below")} />}
+              <Line type="linear" dataKey="kg" stroke={dark ? "#818cf8" : "#a5b4fc"} strokeWidth={1} dot={{ r: 2 }} />
+              <Line type="linear" dataKey="ma" stroke="#0d9488" strokeWidth={2.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        ) : <div className="py-4 text-center text-xs text-slate-400 mt-1">Ab 2 Wiegungen erscheint hier dein Verlauf mit 7-Tage-Schnitt — die Tageszahl schwankt, der Schnitt zählt.</div>}
+        {wSorted.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">{[...wSorted].slice(-4).reverse().map((w) => <span key={w.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-num text-slate-600">{fmtISOshort(w.date)} · {w.kg} kg <button onClick={() => removeWeight(w.id)} className="text-slate-300"><Trash2 size={11} /></button></span>)}</div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow color="#7c3aed">Realitäts-Check (echter Verbrauch)</Eyebrow>
+        {reality ? (
+          <>
+            <div className="mt-1.5 flex items-baseline gap-2"><span className="font-num text-2xl font-bold text-slate-900">{reality.est}</span><span className="text-[11px] text-slate-500">kcal/Tag tatsächlich verbraucht</span></div>
+            <div className="text-[10.5px] text-slate-500 mt-1 font-num leading-relaxed">Aus Ø {reality.avgIn} kcal gegessen und {reality.dKg > 0 ? "+" : ""}{reality.dKg} kg über {reality.span} Tage ({reality.days} Log-Tage). Formel-Annahme aktuell: {kplan.tdee} kcal.</div>
+            {Math.abs(reality.est - kplan.tdee) < 80
+              ? <div className="text-[10.5px] text-teal-700 mt-1.5">Passt — deine Formel-Annahme trifft die Realität, nichts anzupassen.</div>
+              : <button onClick={applyTdee} className="mt-2 w-full rounded-xl bg-violet-600 text-white py-2.5 text-xs font-semibold">Als Verbrauch übernehmen → neues Tagesziel</button>}
+          </>
+        ) : (
+          <div className="text-xs text-slate-500 mt-1.5 leading-relaxed">Der stärkste Trick guter Ernährungs-Apps: aus Essen + Gewichtsverlauf deinen <b>echten</b> Verbrauch berechnen, statt der Formel blind zu glauben. Noch nötig: <b>{need.days} Log-Tage</b> und <b>{need.weighs} Wiegungen</b> (im 21-Tage-Fenster, erste und letzte Wiegung mind. 14 Tage auseinander).</div>
+        )}
+        <div className="mt-2"><InfoToggle label="Wie wird gerechnet?">Ø-Kalorienaufnahme minus Gewichtsänderung × 7700 kcal/kg über den Zeitraum. Nur aussagekräftig, wenn (fast) jeder Tag geloggt ist — Lücken verfälschen das Ergebnis nach unten.</InfoToggle></div>
+      </Card>
+
+      <Card className="p-4">
+        <button onClick={() => setShowProfile((s) => !s)} className="w-full flex items-center justify-between text-left">
+          <Eyebrow>Profil & Ziel</Eyebrow>
+          <ChevronDown size={15} className={`text-slate-400 transition-transform ${showProfile ? "rotate-180" : ""}`} />
+        </button>
+        {showProfile && <div className="mt-3"><NutritionProfileForm initial={nut.profile} onSave={(p) => { saveProfile(p); setShowProfile(false); }} submitLabel="Speichern" /></div>}
+      </Card>
+
+      <UndoToast undo={undoN} onUndo={() => { if (undoN) undoN.restore(); setUndoN(null); }} />
+    </div>
+  );
+}
+
+/* ===================== V3: GARMIN — strukturierte Workouts als .FIT für die Forerunner ===================== */
+const FIT_EPOCH_OFFSET = 631065600; // Unix-Sekunden am 1989-12-31T00:00Z (FIT-Zeitbasis)
+function fitCrc16(bytes) {
+  const T = [0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401, 0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400];
+  let c = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    let t = T[c & 15]; c = (c >> 4) & 0x0FFF; c = c ^ t ^ T[b & 15];
+    t = T[c & 15]; c = (c >> 4) & 0x0FFF; c = c ^ t ^ T[(b >> 4) & 15];
+  }
+  return c;
+}
+function fitBuf() {
+  const a = [];
+  const b = {
+    a,
+    u8(v) { a.push(v & 255); },
+    u16(v) { b.u8(v); b.u8(v >> 8); },
+    u32(v) { b.u16(v & 0xFFFF); b.u16((v >>> 16) & 0xFFFF); },
+    str(s, len) { for (let i = 0; i < len; i++) b.u8(i < s.length ? s.charCodeAt(i) & 127 : 0); },
+  };
+  return b;
+}
+// Basistypen: enum 0x00 · uint16 0x84 · uint32 0x86 · string 0x07 · uint32z 0x8C
+function fitDef(b, local, global, fields) { b.u8(0x40 | local); b.u8(0); b.u8(0); b.u16(global); b.u8(fields.length); fields.forEach((f) => { b.u8(f[0]); b.u8(f[1]); b.u8(f[2]); }); }
+const WKT = { DUR_TIME: 0, DUR_DIST: 1, DUR_OPEN: 5, DUR_REPEAT: 6, TGT_SPEED: 0, TGT_HR: 1, TGT_OPEN: 2, INT_ACTIVE: 0, INT_REST: 1, INT_WARM: 2, INT_COOL: 3 };
+function encodeFitWorkout(name, steps) {
+  const b = fitBuf();
+  fitDef(b, 0, 0, [[0, 1, 0x00], [1, 2, 0x84], [2, 2, 0x84], [3, 4, 0x8C], [4, 4, 0x86]]); // file_id: Typ 5 = Workout
+  b.u8(0); b.u8(5); b.u16(255); b.u16(0); b.u32(1 + Math.floor(Math.random() * 0xFFFFFF)); b.u32(Math.floor(Date.now() / 1000) - FIT_EPOCH_OFFSET);
+  fitDef(b, 1, 26, [[8, 16, 0x07], [4, 1, 0x00], [6, 2, 0x84]]); // workout: Name, Sport (1 = Laufen), Schrittzahl
+  b.u8(1); b.str(name.slice(0, 15), 16); b.u8(1); b.u16(steps.length);
+  fitDef(b, 2, 27, [[254, 2, 0x84], [0, 16, 0x07], [1, 1, 0x00], [2, 4, 0x86], [3, 1, 0x00], [4, 4, 0x86], [5, 4, 0x86], [6, 4, 0x86], [7, 1, 0x00]]); // workout_step
+  steps.forEach((s, i) => { b.u8(2); b.u16(i); b.str((s.name || "").slice(0, 15), 16); b.u8(s.dur); b.u32((s.durVal || 0) >>> 0); b.u8(s.tgt); b.u32((s.tgtVal || 0) >>> 0); b.u32((s.low || 0) >>> 0); b.u32((s.high || 0) >>> 0); b.u8(s.int); });
+  const data = b.a;
+  const h = fitBuf();
+  h.u8(14); h.u8(0x10); h.u16(2140); h.u32(data.length); ".FIT".split("").forEach((c) => h.u8(c.charCodeAt(0)));
+  h.u16(fitCrc16(h.a)); // Header-CRC über die ersten 12 Bytes
+  const all = [...h.a, ...data];
+  const crc = fitCrc16(all);
+  return new Uint8Array([...all, crc & 255, crc >> 8]);
+}
+const hrTgt = (lo, hi) => ({ tgt: WKT.TGT_HR, tgtVal: 0, low: lo + 100, high: hi + 100 }); // FIT-Konvention: bpm = Wert − 100
+const paceTgt = (paceSec, pm = 0.05) => { const v = 1000000 / paceSec; return { tgt: WKT.TGT_SPEED, tgtVal: 0, low: Math.round(v * (1 - pm)), high: Math.round(v * (1 + pm)) }; }; // Geschwindigkeit in mm/s
+const OPEN_TGT = { tgt: WKT.TGT_OPEN, tgtVal: 0, low: 0, high: 0 };
+const parseHrRange = (hr) => { const m = /(\d+)\s*[–-]\s*(\d+)/.exec(hr || ""); return m ? [+m[1], +m[2]] : null; };
+const parseMinutesAvg = (s) => { const m = /(\d+)(?:\s*[–-]\s*(\d+))?\s*Min/i.exec(s || ""); return m ? Math.round((+m[1] + (+(m[2] || m[1]))) / 2) : null; };
+const parseReps = (s) => { const m = /(\d+)\s*[×x]\s*(\d+(?:[.,]\d+)?)\s*(m|km)\b/i.exec(s || ""); if (!m) return null; const d = parseFloat(m[2].replace(",", ".")); return { n: +m[1], distM: Math.round(m[3].toLowerCase() === "km" ? d * 1000 : d) }; };
+const parsePauseSec = (s) => { const m = /(\d+(?:[.,]\d+)?)\s*Min\s*Pause/i.exec(s || ""); if (m) return Math.round(parseFloat(m[1].replace(",", ".")) * 60); const m2 = /(\d+)\s*s(?:ek)?\w*\s*Pause/i.exec(s || ""); return m2 ? +m2[1] : 120; };
+// Plan-Session → strukturiertes Garmin-Workout (HF-/Pace-Zielbereiche & Wiederholungen voreingestellt)
+function buildGarminWorkout(item, week) {
+  const hr = parseHrRange(item.hr);
+  const warm = { name: "Aufwärmen", int: WKT.INT_WARM, dur: WKT.DUR_TIME, durVal: 10 * 60 * 1000, ...OPEN_TGT };
+  const cool = { name: "Auslaufen", int: WKT.INT_COOL, dur: WKT.DUR_TIME, durVal: 5 * 60 * 1000, ...OPEN_TGT };
+  const short = { easy: "Easy", tempo: "Tempo", int: "Intervalle", long: "Lang", test: "5K-Test" }[item.type];
+  if (!short) return null;
+  const name = `W${week} ${short}`;
+  let steps = [];
+  if (item.type === "easy" || item.type === "long") {
+    const min = parseMinutesAvg(item.dur) || 30;
+    steps = [{ name: short, int: WKT.INT_ACTIVE, dur: WKT.DUR_TIME, durVal: min * 60 * 1000, ...(hr ? hrTgt(hr[0], hr[1]) : OPEN_TGT) }];
+  } else if (item.type === "tempo") {
+    const min = parseMinutesAvg(item.dur) || 20;
+    steps = [warm, { name: "Tempo", int: WKT.INT_ACTIVE, dur: WKT.DUR_TIME, durVal: min * 60 * 1000, ...(hr ? hrTgt(hr[0], hr[1]) : paceTgt(targetPaceSec("tempo", week))) }, cool];
+  } else if (item.type === "int") {
+    const reps = parseReps(item.dur) || parseReps(item.desc) || { n: 5, distM: 800 };
+    const pause = parsePauseSec(item.desc || item.dur);
+    steps = [warm,
+      { name: `${reps.distM} m`, int: WKT.INT_ACTIVE, dur: WKT.DUR_DIST, durVal: reps.distM * 100, ...paceTgt(targetPaceSec("int", week)) },
+      { name: "Trabpause", int: WKT.INT_REST, dur: WKT.DUR_TIME, durVal: pause * 1000, ...OPEN_TGT },
+      { name: "Wiederholen", int: WKT.INT_ACTIVE, dur: WKT.DUR_REPEAT, durVal: 1, tgt: WKT.TGT_OPEN, tgtVal: reps.n, low: 0, high: 0 },
+      cool];
+  } else if (item.type === "test") {
+    steps = [warm, { name: "5 km Bestzeit", int: WKT.INT_ACTIVE, dur: WKT.DUR_DIST, durVal: 500000, ...OPEN_TGT }, cool];
+  }
+  return { name, steps };
+}
+function workoutRecipeLines(spec) {
+  return spec.steps.map((s, idx) => {
+    const n = idx + 1;
+    if (s.dur === WKT.DUR_REPEAT) return `${n}. Wiederholen: Schritte ${s.durVal + 1}–${idx} ×${s.tgtVal}`;
+    const d = (s.durVal || 0) / 100;
+    const dur = s.dur === WKT.DUR_TIME ? `${Math.round(s.durVal / 60000)} Min` : s.dur === WKT.DUR_DIST ? (d >= 1000 ? `${d / 1000} km` : `${d} m`) : "offen";
+    const tgt = s.tgt === WKT.TGT_HR ? `HF ${s.low - 100}–${s.high - 100}` : s.tgt === WKT.TGT_SPEED ? `Pace ${secToMMSS(Math.round(1000000 / s.high))}–${secToMMSS(Math.round(1000000 / s.low))}/km` : "locker";
+    return `${n}. ${s.name} — ${dur}, ${tgt}`;
+  });
+}
+function GarminExport({ item, week }) {
+  const spec = useMemo(() => buildGarminWorkout(item, week), [item, week]);
+  const [copied, setCopied] = useState(false);
+  if (!spec) return null;
+  const lines = workoutRecipeLines(spec);
+  const download = () => { try { const bytes = encodeFitWorkout(spec.name, spec.steps); const blob = new Blob([bytes], { type: "application/octet-stream" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = spec.name.replace(/\s+/g, "_") + ".fit"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); } catch (_) {} };
+  const copy = async () => { try { await navigator.clipboard.writeText(spec.name + "\n" + lines.join("\n")); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (_) {} };
+  return (
+    <div className="rounded-xl bg-slate-100 p-2.5 space-y-2">
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500"><Watch size={12} /> Auf die Garmin-Uhr <span className="rounded bg-amber-100 text-amber-700 px-1.5 py-0.5">experimentell</span></div>
+      <ul className="space-y-0.5">{lines.map((l, i) => <li key={i} className="text-[10.5px] text-slate-600 font-num">{l}</li>)}</ul>
+      <div className="flex gap-1.5">
+        <button onClick={download} className="flex-1 rounded-lg bg-slate-900 text-white py-2 text-[11px] font-semibold inline-flex items-center justify-center gap-1"><Download size={12} /> .FIT laden</button>
+        <button onClick={copy} className="flex-1 rounded-lg bg-white border border-slate-200 text-slate-700 py-2 text-[11px] font-semibold inline-flex items-center justify-center gap-1"><Copy size={12} /> {copied ? "Kopiert ✓" : "Rezept kopieren"}</button>
+      </div>
+      <InfoToggle label="So kommt's auf die Forerunner 55">
+        <b>Mit Kabel:</b> Uhr per USB an den Computer → Laufwerk „GARMIN“ → die .FIT-Datei in den Ordner <b>GARMIN/NEWFILES</b> kopieren → auswerfen. Auf der Uhr: Lauf-Profil → UP lang gedrückt → Training → Trainings → „{spec.name}“ wählen. HF-/Pace-Zielbereiche, Distanzen und Wiederholungen sind voreingestellt — die Uhr führt dich durch jede Stufe.<br />
+        <b>Ohne Kabel:</b> „Rezept kopieren“ und in der Garmin-Connect-App unter Mehr → Training → Trainings 1:1 anlegen — synchronisiert automatisch auf die Uhr.<br />
+        Der Datei-Export ist experimentell: Falls die Uhr das Workout nicht anzeigt, bitte den Connect-Weg nehmen.
+      </InfoToggle>
+    </div>
+  );
+}
+
+/* ===================== EINSTELLUNGEN ===================== */
+function ThemeCard({ data, setData }) {
+  const theme = data.theme || "auto";
+  const opts = [["light", "Hell", Sun], ["dark", "Dunkel", Moon], ["auto", "Auto", MonitorSmartphone]];
+  return (
+    <Card className="p-4">
+      <Eyebrow>Darstellung</Eyebrow>
+      <div className="mt-2.5 flex gap-2">
+        {opts.map(([id, label, Icon]) => (
+          <button key={id} onClick={() => setData((d) => ({ ...d, theme: id }))}
+            className={`flex-1 rounded-xl py-2.5 text-xs font-semibold border transition flex flex-col items-center gap-1 ${theme === id ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>
+            <Icon size={16} /> {label}
+          </button>
+        ))}
+      </div>
+      <div className="text-[11px] text-slate-400 mt-2">„Auto" folgt der Systemeinstellung deines Geräts.</div>
+    </Card>
+  );
+}
+function VBSlotsCard({ data, setData }) {
+  const slots = data.vbSlots?.length ? data.vbSlots : DEFAULT_VB_SLOTS;
+  const update = (i, field, val) => setData((d) => { const next = [...(d.vbSlots?.length ? d.vbSlots : DEFAULT_VB_SLOTS)]; next[i] = { ...next[i], [field]: val }; return { ...d, vbSlots: next }; });
+  const removeSlot = (i) => setData((d) => { const next = [...(d.vbSlots?.length ? d.vbSlots : DEFAULT_VB_SLOTS)]; next.splice(i, 1); return { ...d, vbSlots: next }; });
+  const addSlot = () => setData((d) => ({ ...d, vbSlots: [...(d.vbSlots?.length ? d.vbSlots : DEFAULT_VB_SLOTS), { day: "Mi", time: "19:00" }] }));
+  return (
+    <Card className="p-4">
+      <Eyebrow>Volleyball-Trainingszeiten</Eyebrow>
+      <p className="text-[11px] text-slate-400 mt-1 mb-2 leading-relaxed">Gilt für alle Wochen (z. B. wenn der Verein in den Ferien andere Zeiten hat). Turnier- und Testwochen-Sonderregeln bleiben aktiv. Pro Tag zählt der letzte Eintrag.</p>
+      <div className="space-y-2">
+        {slots.map((s, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <select value={s.day} onChange={(e) => update(i, "day", e.target.value)} className="tc-input" style={{ width: 84, flexShrink: 0 }}>{DAYS.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+            <input type="time" value={s.time} onChange={(e) => update(i, "time", e.target.value)} className="tc-input font-num" />
+            <button onClick={() => removeSlot(i)} disabled={slots.length <= 1} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 disabled:opacity-30 shrink-0"><Trash2 size={15} /></button>
+          </div>
+        ))}
+      </div>
+      {slots.length < 4 && <button onClick={addSlot} className="mt-2.5 w-full rounded-xl border-2 border-dashed border-slate-300 py-2.5 text-xs font-semibold text-slate-600 flex items-center justify-center gap-1.5"><Plus size={14} /> Trainingszeit hinzufügen</button>}
+    </Card>
+  );
+}
+
+/* ===================== SCHULE ===================== */
+function SchoolTab({ data, setData }) {
+  const dark = useDark();
+  const [form, setForm] = useState({ titel: "", fach: "", faelligkeit: todayISO(), art: "hausaufgabe" });
+  const save = () => {
+    if (!form.titel.trim()) return;
+    const entry = { id: uid(), titel: form.titel.trim(), fach: form.fach.trim(), faelligkeit: form.faelligkeit, art: form.art, erledigt: false };
+    setData((d) => ({ ...d, schoolLog: [...d.schoolLog, entry] }));
+    setForm((f) => ({ titel: "", fach: "", faelligkeit: todayISO(), art: f.art }));
+  };
+  const toggleErledigt = (id) => setData((d) => ({ ...d, schoolLog: d.schoolLog.map((s) => (s.id === id ? { ...s, erledigt: !s.erledigt } : s)) }));
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const remove = (id) => {
+    const item = data.schoolLog.find((s) => s.id === id);
+    setData((d) => ({ ...d, schoolLog: d.schoolLog.filter((s) => s.id !== id) }));
+    if (item) triggerUndo(item.art === "klausur" ? "Klausur" : "Hausaufgabe", "schoolLog", item);
+  };
+  const sorted = [...data.schoolLog].sort((a, b) => (a.erledigt === b.erledigt ? a.faelligkeit.localeCompare(b.faelligkeit) : a.erledigt ? 1 : -1));
+  const openCount = data.schoolLog.filter((s) => !s.erledigt).length;
+  const overdueCount = data.schoolLog.filter((s) => !s.erledigt && daysUntil(s.faelligkeit) < 0).length;
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <Eyebrow>Neu eintragen</Eyebrow>
+        <div className="mt-3 space-y-2.5">
+          <input placeholder="Was? (z. B. Mathe S. 42, Aufgabe 3)" value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="tc-input" />
+          <div className="grid grid-cols-2 gap-2.5">
+            <input placeholder="Fach (optional)" value={form.fach} onChange={(e) => setForm({ ...form, fach: e.target.value })} className="tc-input" />
+            <input type="date" value={form.faelligkeit} onChange={(e) => setForm({ ...form, faelligkeit: e.target.value })} className="tc-input font-num" />
+          </div>
+          <div className="flex gap-1.5">
+            {SCHOOL_ART.map(([v, l]) => (
+              <button key={v} onClick={() => setForm({ ...form, art: v })} className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-semibold border transition ${form.art === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+            ))}
+          </div>
+          <button onClick={save} className="w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow>Einträge</Eyebrow>
+          <span className="text-[11px] font-num text-slate-400">{openCount} offen{overdueCount ? ` · ${overdueCount} überfällig` : ""}</span>
+        </div>
+        {sorted.length ? (
+          <div className="space-y-2">
+            {sorted.map((item) => {
+              const status = schoolStatus(item);
+              const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
+              const col = dark ? bright : accent;
+              return (
+                <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") }}>
+                  <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
+                    {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
+                    <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {item.fach && <span>{item.fach}</span>}
+                      {item.art === "klausur" && <span className="font-semibold" style={{ color: col }}>Klausur</span>}
+                      {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
+                    </div>
+                  </div>
+                  <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+                </div>
+              );
+            })}
+          </div>
+        ) : <div className="py-8 text-center text-xs text-slate-400">Noch nichts eingetragen.</div>}
+      </Card>
+
+      <UndoToast undo={undo} onUndo={doUndo} />
+    </div>
+  );
+}
+
+function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, onClose }) {
+  return (
+    <div className="space-y-4">
+      <Card className="p-3 flex items-center gap-3">
+        <button onClick={onClose} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600"><ChevronLeft size={18} /></button>
+        <div>
+          <div className="font-display font-bold text-slate-900">Einstellungen</div>
+          <div className="text-[11px] text-slate-500">Darstellung · Trainingszeiten · Daten</div>
+        </div>
+      </Card>
+      <ThemeCard data={data} setData={setData} />
+      <VBSlotsCard data={data} setData={setData} />
+      <SyncCard data={data} setData={setData} savedAt={savedAt} onRefresh={onRefresh} refreshing={refreshing} />
+      <Card className="p-4">
+        <Eyebrow color="#e11d48">Daten zurücksetzen</Eyebrow>
+        <p className="text-[11px] text-slate-400 mt-1 mb-2.5">Löscht alle Läufe, Kraftwerte, Check-ins, Häkchen und Einstellungen unwiderruflich.</p>
+        <button onClick={onReset} className="w-full rounded-xl border border-rose-200 text-rose-600 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><RotateCcw size={13} /> Alles zurücksetzen</button>
+      </Card>
+    </div>
+  );
+}
+
+/* ===================== APP ===================== */
+const TABS = [
+  { id: "cockpit", label: "Cockpit", icon: Gauge },
+  { id: "woche", label: "Woche", icon: CalendarDays },
+  { id: "kcal", label: "Kcal", icon: Utensils },
+  { id: "fortschritt", label: "Fortschritt", icon: TrendingUp },
+  { id: "recovery", label: "Recovery", icon: Moon },
+  { id: "schule", label: "Schule", icon: GraduationCap },
+];
+
+export default function App() {
+  const [data, setData, loaded, savedAt] = usePersistentData();
+  const [tab, setTab] = useState("cockpit");
+  const [showSettings, setShowSettings] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [sysDark, setSysDark] = useState(() => { try { return window.matchMedia?.("(prefers-color-scheme: dark)").matches || false; } catch (_) { return false; } });
+  useEffect(() => {
+    try {
+      const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+      if (!mq) return;
+      const h = (e) => setSysDark(e.matches);
+      mq.addEventListener?.("change", h);
+      return () => mq.removeEventListener?.("change", h);
+    } catch (_) {}
+  }, []);
+  const dark = data.theme === "dark" || (data.theme !== "light" && sysDark);
+
+  const today = new Date();
+  const currentWeek = planWeekOf(today);
+  const tournamentPassed = atMidnight(today) > TOURNAMENT;
+  const phaseNow = tournamentPassed ? 2 : 1;
+  const daysToT = Math.ceil((TOURNAMENT - atMidnight(today)) / DAY_MS);
+  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots), [currentWeek, data.vbSlots]);
+
+  const reset = () => { if (window.confirm("Alle eingetragenen Daten (Läufe, Kraftwerte, Check-ins, Häkchen) und Einstellungen löschen?")) { setData(DEFAULT_DATA); setShowSettings(false); if (hasStorage) window.storage.delete(STORAGE_KEY, false).catch(() => {}); } };
+  const manualRefresh = async () => {
+    if (!hasStorage) return;
+    setRefreshing(true);
+    try { const res = await window.storage.get(STORAGE_KEY, false); if (res?.value) { let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) }; const mig = migrateDone(next.done); if (mig.changed) next = { ...next, done: mig.done }; setData(next); } } catch (_) {}
+    setRefreshing(false);
+  };
+
+  // iPhone/iPad: Meta-Tags setzen, damit die App sich als Home-Bildschirm-Icon ohne Browserleiste öffnen lässt
+  useEffect(() => {
+    try {
+      const setMeta = (name, content) => {
+        let el = document.querySelector(`meta[name="${name}"]`);
+        if (!el) { el = document.createElement("meta"); el.setAttribute("name", name); document.head.appendChild(el); }
+        el.setAttribute("content", content);
+      };
+      setMeta("viewport", "width=device-width, initial-scale=1, viewport-fit=cover");
+      setMeta("apple-mobile-web-app-capable", "yes");
+      setMeta("mobile-web-app-capable", "yes");
+      setMeta("apple-mobile-web-app-status-bar-style", "black-translucent");
+      setMeta("apple-mobile-web-app-title", "Cockpit");
+      setMeta("theme-color", dark ? "#0b1220" : "#0f172a");
+    } catch (_) {}
+  }, [dark]);
+
+  return (
+    <ThemeContext.Provider value={dark}>
+    <div className={`min-h-screen tc-app bg-slate-50 ${dark ? "tc-dark" : ""}`} style={{ fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+        .font-display{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;}
+        .font-num{font-family:'JetBrains Mono',ui-monospace,monospace;font-feature-settings:'tnum';}
+        .tc-input{width:100%;border:1px solid #e2e8f0;border-radius:.75rem;padding:.55rem .75rem;font-size:16px;color:#0f172a;background:#fff;}
+        .tc-input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15);}
+        @media (prefers-reduced-motion: reduce){*{transition:none!important;}}
+
+        /* iPhone/iPad-Feinschliff */
+        .tc-app{min-height:100vh;min-height:100dvh;}
+        html,body{overscroll-behavior-y:contain;}
+        button,a{-webkit-tap-highlight-color:transparent;touch-action:manipulation;-webkit-touch-callout:none;}
+        .tc-shell{max-width:576px;}
+        .tc-tablet-2col{display:block;}
+        @media (min-width:768px){
+          .tc-shell{max-width:720px;}
+          .tc-tablet-2col{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:start;}
+          .tc-tablet-2col > *{margin:0;}
+        }
+        @media (min-width:1024px){ .tc-shell{max-width:860px;} }
+
+        /* ===== Dark-Mode (überschreibt die hellen Utility-Klassen) ===== */
+        .tc-dark{color-scheme:dark;}
+        .tc-dark.bg-slate-50, .tc-dark .bg-slate-50{background-color:#0b1220!important;}
+        .tc-dark .bg-slate-50\\/90{background-color:rgba(11,18,32,.92)!important;}
+        .tc-dark .bg-white{background-color:#141d2c!important;}
+        .tc-dark .bg-white\\/60{background-color:rgba(20,29,44,.6)!important;}
+        .tc-dark .bg-white\\/70{background-color:rgba(20,29,44,.75)!important;}
+        .tc-dark .bg-slate-100{background-color:#1d2839!important;}
+        .tc-dark .bg-indigo-50{background-color:rgba(99,102,241,.16)!important;}
+        .tc-dark .bg-teal-100{background-color:rgba(13,148,136,.22)!important;}
+        .tc-dark .bg-rose-100{background-color:rgba(225,29,72,.2)!important;}
+        .tc-dark .bg-amber-100{background-color:rgba(245,158,11,.22)!important;}
+        .tc-dark .border-slate-200, .tc-dark .border-slate-200\\/80, .tc-dark .border-slate-200\\/70{border-color:#26334a!important;}
+        .tc-dark .border-slate-300{border-color:#31405c!important;}
+        .tc-dark .border-indigo-300{border-color:rgba(99,102,241,.55)!important;}
+        .tc-dark .border-amber-300{border-color:rgba(245,158,11,.55)!important;}
+        .tc-dark .border-emerald-200{border-color:rgba(5,150,105,.5)!important;}
+        .tc-dark .border-rose-200{border-color:rgba(225,29,72,.5)!important;}
+        .tc-dark .divide-slate-100>:not([hidden])~:not([hidden]){border-color:#26334a!important;}
+        .tc-dark .text-slate-900{color:#f1f5f9!important;}
+        .tc-dark .text-slate-800{color:#e2e8f0!important;}
+        .tc-dark .text-slate-700{color:#cbd5e1!important;}
+        .tc-dark .text-slate-600{color:#aebccd!important;}
+        .tc-dark .text-slate-500{color:#8ea0b5!important;}
+        .tc-dark .text-indigo-900{color:#c7d2fe!important;}
+        .tc-dark .text-indigo-700{color:#a5b4fc!important;}
+        .tc-dark .text-indigo-600{color:#818cf8!important;}
+        .tc-dark .text-indigo-500{color:#818cf8!important;}
+        .tc-dark .text-teal-900{color:#99f6e4!important;}
+        .tc-dark .text-teal-800{color:#5eead4!important;}
+        .tc-dark .text-teal-700{color:#2dd4bf!important;}
+        .tc-dark .text-amber-900{color:#fde68a!important;}
+        .tc-dark .text-amber-800\\/80{color:rgba(252,211,77,.85)!important;}
+        .tc-dark .text-amber-700{color:#fbbf24!important;}
+        .tc-dark .text-emerald-900{color:#a7f3d0!important;}
+        .tc-dark .text-emerald-700{color:#34d399!important;}
+        .tc-dark .text-emerald-500{color:#34d399!important;}
+        .tc-dark .text-rose-600{color:#fb7185!important;}
+        .tc-dark .text-rose-700{color:#fda4af!important;}
+        .tc-dark .text-amber-500{color:#fbbf24!important;}
+        .tc-dark .text-amber-600{color:#fbbf24!important;}
+        .tc-dark .text-teal-600{color:#5eead4!important;}
+        .tc-dark .text-indigo-400{color:#a5b4fc!important;}
+        .tc-dark .text-violet-500{color:#c4b5fd!important;}
+        .tc-dark .shadow-sm{box-shadow:0 0 0 1px rgba(255,255,255,.03)!important;}
+        .tc-dark .tc-input{background:#141d2c;border-color:#31405c;color:#e2e8f0;}
+        .tc-dark .bg-amber-400{background-color:#d97706!important;}
+      `}</style>
+
+      <div className="tc-shell mx-auto">
+        {/* Command bar */}
+        <header className="px-4 pb-3" style={{ paddingTop: "calc(1.25rem + env(safe-area-inset-top, 0px))" }}>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-display text-xl font-bold text-slate-900 leading-none">Trainings-Cockpit</div>
+              <div className="text-xs text-slate-400 mt-1">Volleyball · Laufen · Kraft · Schule</div>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <div className="text-right text-[11px] text-slate-400 font-num">{today.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" })}</div>
+              <button onClick={() => setShowSettings((s) => !s)} aria-label="Einstellungen"
+                className={`h-11 w-11 rounded-xl border flex items-center justify-center transition ${showSettings ? "bg-indigo-600 border-transparent text-white" : "bg-white border-slate-200 text-slate-500"}`}>
+                <Settings size={18} />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Tabs */}
+        <nav className="sticky top-0 z-20 bg-slate-50/90 px-4 pb-2 backdrop-blur border-b border-slate-200/70">
+          <div className="flex gap-1 rounded-2xl bg-white border border-slate-200 p-1 shadow-sm">
+            {TABS.map((t) => {
+              const Icon = t.icon, active = tab === t.id && !showSettings;
+              return (
+                <button key={t.id} onClick={() => { setTab(t.id); setShowSettings(false); }} className={`flex-1 flex flex-col items-center gap-0.5 rounded-xl py-2.5 transition ${active ? "bg-indigo-600 text-white" : "text-slate-400"}`}>
+                  <Icon size={17} /><span className="text-[10px] font-semibold">{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
+        <main className="px-4 py-4">
+          {!loaded ? (
+            <div className="py-20 text-center text-sm text-slate-400">Lade …</div>
+          ) : showSettings ? (
+            <SettingsView data={data} setData={setData} savedAt={savedAt} onRefresh={manualRefresh} refreshing={refreshing} onReset={reset} onClose={() => setShowSettings(false)} />
+          ) : (
+            <>
+              {tab === "cockpit" && <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} goWeek={() => setTab("woche")} goRecovery={() => setTab("recovery")} goKcal={() => setTab("kcal")} goSchule={() => setTab("schule")} tournamentPassed={tournamentPassed} />}
+              {tab === "woche" && <WeekTab data={data} setData={setData} currentWeek={currentWeek} tournamentPassed={tournamentPassed} />}
+              {tab === "fortschritt" && <ProgressTab data={data} setData={setData} currentWeek={currentWeek} />}
+              {tab === "kcal" && <NutritionTab data={data} setData={setData} plan={plan} />}
+              {tab === "recovery" && <RecoveryTab data={data} setData={setData} currentWeek={currentWeek} />}
+              {tab === "schule" && <SchoolTab data={data} setData={setData} />}
+            </>
+          )}
+
+          <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v4.0` : "Fortschritt wird automatisch gespeichert · v4.0"}</span>
+          </footer>
+        </main>
+      </div>
+    </div>
+    </ThemeContext.Provider>
+  );
+}
