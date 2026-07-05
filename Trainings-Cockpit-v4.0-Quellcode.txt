@@ -255,7 +255,7 @@ function schoolStatus(item) {
   if (d < 0) return { tone: "warn", label: `${-d} Tag${-d === 1 ? "" : "e"} überfällig` };
   if (d === 0) return { tone: "mid", label: "Heute fällig" };
   if (d <= 3) return { tone: "mid", label: `In ${d} Tag${d === 1 ? "" : "en"}` };
-  return { tone: "rest", label: fmtISOshort(item.faelligkeit) };
+  return { tone: "rest", label: `Fällig ${fmtISOshort(item.faelligkeit)}` };
 }
 
 /* ===================== Persistenz ===================== */
@@ -2355,8 +2355,14 @@ function SchoolTab({ data, setData }) {
         <div className="mt-3 space-y-2.5">
           <input placeholder="Was? (z. B. Mathe S. 42, Aufgabe 3)" value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="tc-input" />
           <div className="grid grid-cols-2 gap-2.5">
-            <input placeholder="Fach (optional)" value={form.fach} onChange={(e) => setForm({ ...form, fach: e.target.value })} className="tc-input" />
-            <input type="date" value={form.faelligkeit} onChange={(e) => setForm({ ...form, faelligkeit: e.target.value })} className="tc-input font-num" />
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fach (optional)</div>
+              <input placeholder="z. B. Mathe" value={form.fach} onChange={(e) => setForm({ ...form, fach: e.target.value })} className="tc-input" />
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fällig bis</div>
+              <input type="date" value={form.faelligkeit} onChange={(e) => setForm({ ...form, faelligkeit: e.target.value })} className="tc-input font-num" />
+            </div>
           </div>
           <div className="flex gap-1.5">
             {SCHOOL_ART.map(([v, l]) => (
