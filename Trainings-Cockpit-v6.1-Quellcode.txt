@@ -782,8 +782,10 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     </button>
   );
   return (
-    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={{ ...(done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}), ...(item.cancelled ? { opacity: 0.6 } : {}) }}>
-      <div className="p-3.5 flex items-center gap-3">
+    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+      {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
+          sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
+      <div className="p-3.5 flex items-center gap-3" style={item.cancelled ? { opacity: 0.6 } : {}}>
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
@@ -1838,29 +1840,24 @@ function RunProgress({ data, setData, currentWeek }) {
         <Eyebrow color="#0d9488">Laufökonomie</Eyebrow>
         <div className="text-[10px] text-slate-400 mt-1 mb-2">Schrittfrequenz & Schrittlänge — steigende Frequenz bei stabiler Länge deutet auf bessere Technik hin</div>
         {economySeries.length >= 2 ? (
-          /* v6.0: zwei getrennte Verläufe statt zweier übereinandergelegter Y-Achsen — jede Linie hat
-             jetzt ihre eigene, ehrliche Skala. Gleiches YAxis-width hält beide X-Achsen deckungsgleich. */
+          /* v6.1: auf Nutzerwunsch zurück zur kombinierten Doppelachsen-Ansicht (v6.0 hatte kurzzeitig
+             zwei Einzelcharts — im direkten Vergleich wurde die überlagerte Darstellung bevorzugt). */
           <>
-            <div className="text-[10px] font-semibold mt-1" style={{ color: safeText(dark, "#0d9488") }}>Schrittfrequenz (spm)</div>
-            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
-              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
-                <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                <XAxis dataKey="date" tick={false} height={4} />
-                <YAxis domain={["dataMin-4", "dataMax+4"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => Math.round(v)} />
-                <Tooltip formatter={(v) => [v + " spm", "Schrittfrequenz"]} {...tipTop(dark)} />
-                <Line type="linear" dataKey="cadence" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
-              </LineChart>
-            </ResponsiveContainer></div>
-            <div className="text-[10px] font-semibold mt-2" style={{ color: safeText(dark, "#a855f7") }}>Schrittlänge (m)</div>
-            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
-              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
+            <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                <YAxis domain={["dataMin-0.08", "dataMax+0.08"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
-                <Tooltip formatter={(v) => [v + " m", "Schrittlänge"]} {...tipTop(dark)} />
-                <Line type="linear" dataKey="stride" stroke="#a855f7" strokeWidth={2.5} dot={{ r: 3, fill: "#a855f7" }} connectNulls />
+                <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                <Tooltip {...tipTop(dark)} />
+                <Line yAxisId="left" type="linear" dataKey="cadence" name="Schrittfrequenz (spm)" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
+                <Line yAxisId="right" type="linear" dataKey="stride" name="Schrittlänge (m)" stroke="#a855f7" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: "#a855f7" }} connectNulls />
               </LineChart>
             </ResponsiveContainer></div>
+            <div className="flex gap-3 text-[10px] text-slate-500 mt-1">
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#0d9488" }} /> Schrittfrequenz</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#a855f7" }} /> Schrittlänge</span>
+            </div>
           </>
         ) : <div className="py-6 text-center text-xs text-slate-400">Noch keine Kadenz-Daten — importiere Garmin-Läufe mit Schrittfrequenz.</div>}
       </Card>
@@ -3342,7 +3339,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.0` : "Fortschritt wird automatisch gespeichert · v6.0"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.1` : "Fortschritt wird automatisch gespeichert · v6.1"}</span>
           </footer>
         </main>
       </div>
