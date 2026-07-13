@@ -35,6 +35,9 @@ const tipProps = (dark, fontSize = 12) => ({
   itemStyle: { color: dark ? "#e2e8f0" : "#0f172a" },
   labelStyle: { color: dark ? "#f8fafc" : "#0f172a", fontWeight: 700, marginBottom: 3 },
 });
+// v6.0, iPhone: Tooltip klebt oben an der Chart-Kante statt am Finger — so verdeckt weder der Finger
+// den Datenpunkt noch die Tooltip-Karte die halbe Chart. Für jeden Standard-<Tooltip> verwenden.
+const tipTop = (dark, fontSize = 12) => ({ ...tipProps(dark, fontSize), position: { y: 0 }, allowEscapeViewBox: { x: false, y: false } });
 // Hex → HSL → Hex, um im Dark Mode JEDE hartcodierte Textfarbe automatisch hell genug zu machen —
 // unabhängig davon, welcher Ton irgendwo im Code verwendet wird. Verhindert diese Bugklasse dauerhaft.
 function hexToHsl(hex) {
@@ -68,14 +71,18 @@ const softBg = (dark, accent, lightHex) => (dark ? accent + "26" : lightHex);
 // einem farbigen Balken, dem Gitter oder Freifläche landet — behebt das Kontrastproblem strukturell,
 // statt sich auf Zeichenreihenfolge oder Zufalls-Kontrast mit dem Untergrund zu verlassen.
 // bias "above"/"below" hält zwei Labels auf derselben Chart auch bei nah beieinanderliegenden Werten auseinander.
+// v6.0: "aboveLeft"/"belowLeft" ankern den Chip links — für Charts, deren Datenlinie rechts nahe der
+// Referenzlinie verläuft und den Chip sonst schneiden würde (Auswahl automatisch via chipSide()).
 function chipLabel(text, color, dark, bias = "above") {
   return (props) => {
     const { viewBox } = props;
     if (!viewBox) return null;
     const fontSize = 9, padX = 5, h = 13;
     const w = Math.round(text.length * 5.4 + padX * 2);
-    const x = bias === "vtop" ? Math.max(2, viewBox.x - w / 2) : viewBox.x + viewBox.width - w - 3;
-    const y = bias === "above" ? viewBox.y - h - 3 : bias === "below" ? viewBox.y + 3 : bias === "vtop" ? viewBox.y - h - 2 : viewBox.y - h / 2;
+    const left = bias.endsWith("Left");
+    const vpos = bias === "vtop" ? "vtop" : bias.startsWith("above") ? "above" : bias.startsWith("below") ? "below" : "mid";
+    const x = bias === "vtop" ? Math.max(2, viewBox.x - w / 2) : left ? viewBox.x + 3 : viewBox.x + viewBox.width - w - 3;
+    const y = vpos === "above" ? viewBox.y - h - 3 : vpos === "below" ? viewBox.y + 3 : vpos === "vtop" ? viewBox.y - h - 2 : viewBox.y - h / 2;
     return (
       <g>
         <rect x={x} y={y} width={w} height={h} rx={4} fill={dark ? "#16202f" : "#ffffff"} stroke={dark ? "#2b3950" : "#e2e8f0"} strokeWidth={0.75} />
@@ -83,6 +90,13 @@ function chipLabel(text, color, dark, bias = "above") {
       </g>
     );
   };
+}
+// v6.0: Referenz-Chip automatisch links ankern, wenn die letzten Datenpunkte der Referenz zu nahe
+// kommen — dort (rechts) würde der Chip sonst auf der Datenlinie liegen. span = sichtbare Y-Spanne.
+function chipSide(values, refVal, span, base = "above") {
+  const tail = (values || []).filter((v) => v != null && !isNaN(v)).slice(-3);
+  const near = span > 0 && tail.some((v) => Math.abs(v - refVal) < span * 0.2);
+  return near ? base + "Left" : base;
 }
 function VolleyballIcon({ size = 16, color = "currentColor" }) {
   return (
@@ -150,6 +164,16 @@ function targetPaceSec(type, week) {
   if (type === "int") return week >= 9 ? 280 : 275;
   if (type === "tempo") { if (week <= 3) return 315; if (week <= 7) return 312; if (week <= 11) return 310; return 305; }
   return null;
+}
+/* ===== v6.0: Plan-Zielbereiche (HF-Band aus dem Plan, Pace-Band um die Ziel-Pace) ===== */
+const PACE_BAND_SEC = 15; // Toleranz um die Ziel-Pace (±s) — numerisches Ziel gibt es nur für Intervalle/Tempo
+// HF-Zielbereich aus dem Plan-String: "130–138" → {lo,hi} · "bis 196" → nur Obergrenze
+function parseHrTarget(hr) {
+  if (!hr) return null;
+  const m = String(hr).match(/(\d{2,3})\s*[–-]\s*(\d{2,3})/);
+  if (m) return { lo: +m[1], hi: +m[2] };
+  const b = String(hr).match(/bis\s*(\d{2,3})/i);
+  return b ? { lo: null, hi: +b[1] } : null;
 }
 
 const STRENGTH = {
@@ -229,7 +253,36 @@ function testDateFor(illnessLog, planEndMode) {
   return new Date(mondayOfWeek(planTotalWeeks(illnessLog, planEndMode)).getTime() + 2 * DAY_MS);
 }
 
-function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
+/* ===== v6.0: Kalender-Helfer + Plan-Ziel-Auflösung für erfasste Läufe ===== */
+// Lokales ISO-Datum ohne UTC-Kippkante (toISOString würde nachts den Vortag liefern)
+const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Montag-zuerst 6×7-Monatsraster (42 Zellen, inkl. gedimmter Nachbarmonats-Tage)
+const monthGrid = (anchor) => { const start = mondayOf(new Date(anchor.getFullYear(), anchor.getMonth(), 1)); return Array.from({ length: 42 }, (_, i) => new Date(start.getTime() + i * DAY_MS)); };
+const weekGrid = (anchor) => { const start = mondayOf(anchor); return Array.from({ length: 7 }, (_, i) => new Date(start.getTime() + i * DAY_MS)); };
+// Anders als planWeekOf OHNE Klemmung auf 1..N: null außerhalb des Plans — der Kalender zeigt dort nur Schule.
+function rawPlanWeekOf(d, illnessLog, planEndMode) {
+  const idx = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)) + 1;
+  return idx >= 1 && idx <= planTotalWeeks(illnessLog, planEndMode) ? idx : null;
+}
+// Plan-Ziele (HF-Bereich, Ziel-Pace) für einen erfassten Lauf: bevorzugt der Plan-Lauf des Wochentags,
+// sonst der typgleiche Lauf derselben Woche — deckt verschobene Einheiten ab. Außerhalb des Plans: alles null.
+function planRunTargets(dateISO, type, illnessLog, planEndMode) {
+  const d = new Date(dateISO + "T12:00:00");
+  const week = rawPlanWeekOf(d, illnessLog, planEndMode);
+  if (!week) return { hr: null, hrLabel: null, pace: null, week: null };
+  const effW = week >= planTotalWeeks(illnessLog, planEndMode) ? TOTAL_WEEKS : effectiveWeek(week, illnessLog);
+  const runs = getRunWeek(effW);
+  const sameDay = runs[DAYS[(d.getDay() + 6) % 7]];
+  const item = sameDay && sameDay.type === type ? sameDay : Object.values(runs).find((r) => r.type === type) || null;
+  return { hr: item ? parseHrTarget(item.hr) : null, hrLabel: item ? item.hr : null, pace: targetPaceSec(type, effW), week };
+}
+// Ziel-HF eines Lauftyps in einer (effektiven) Planwoche — für die Fortschritt-je-Typ-Charts
+function hrTargetForType(type, effW) {
+  const r = Object.values(getRunWeek(effW)).find((x) => x.type === type) || null;
+  return { band: r ? parseHrTarget(r.hr) : null, label: r ? r.hr : null };
+}
+
+function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, overrides) {
   const { monday, hasT, phase: autoPhase, tDay } = weekMeta(week);
   const phaseNum = phaseOverride || autoPhase;
   const ph = PHASE[phaseNum];
@@ -240,6 +293,20 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
   const strengthMap = isTestWeek ? {} : (phaseNum === 2 && REGEN[effW]) ? PHASE2_REGEN_STRENGTH : ph.strength;
   const VB = vbMap(vbSlots);
   const mkuid = (day, kind) => `w${week}-${day}-${kind}`; // stabil: hängt nicht an der Position im Tages-Array
+  // v6.0: Ausfälle & Ersatz-Einheiten (data.overrides). Ersatz bekommt die abgeleitete uid "<original>-ersatz" —
+  // deterministisch, kollisionsfrei zum mkuid-Schema und damit stabil abhakbar wie jede Plan-Einheit.
+  const ov = overrides || {};
+  const repsByDay = {};
+  Object.entries(ov).forEach(([ouid, o]) => {
+    if (!ouid.startsWith(`w${week}-`) || !o || o.status !== "ausgefallen" || !o.replacement) return;
+    const r = o.replacement;
+    if (!DAYS.includes(r.day) || !SPORT[r.sport] || r.sport === "rest") return;
+    (repsByDay[r.day] = repsByDay[r.day] || []).push({
+      uid: `${ouid}-ersatz`, sport: r.sport, label: r.label || "Ersatz-Einheit", dur: r.dur || "",
+      desc: `Ersatz für ausgefallenes ${ouid.endsWith("-vb") ? "Volleyball" : "Training"}`,
+      load: Math.max(1, Math.min(9, Number(r.load) || 4)), replacement: true, replacesUid: ouid,
+    });
+  });
 
   return DAYS.map((day) => {
     const items = [];
@@ -266,6 +333,11 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
     }
     if (hasT && day === tDay) items.push({ uid: mkuid(day, "tournament"), sport: "vb", label: "Schulturnier", dur: "Turniertag", desc: "Schule · Bestleistung anstreben", load: 9, tournament: true });
     else if (VB[day] && !(isTestWeek && day === "Mi")) items.push({ uid: mkuid(day, "vb"), sport: "vb", ...VB[day], load: 6 }); // Testwoche: kein Volleyball am Testtag
+    // v6.0: Ersatz-Einheiten am Zieltag einfügen (vor der Krank-Markierung, damit sie sie mit durchläuft),
+    // dann Ausfälle anwenden: Einheit bleibt sichtbar, zählt aber nirgends mehr (load 0 → fällt automatisch
+    // aus Streak, Wochenlast, Meso-/Wochen-Chart und Kalender-Punkten heraus).
+    if (repsByDay[day]) items.push(...repsByDay[day]);
+    items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.load = 0; } });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert), nur Empfehlung/Badge ändern sich
     if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; it.desc += " · Krank gemeldet — Pause empfohlen, höchstens sehr locker"; } });
     else if (sickPhase === "ramp") items.forEach((it) => {
@@ -276,10 +348,10 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
     return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
   });
 }
-const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).reduce((s, d) => s + d.load, 0);
-function weekLoadBySport(week, vbSlots, illnessLog, planEndMode) {
+const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode, overrides) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).reduce((s, d) => s + d.load, 0);
+function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
   const out = { run: 0, vb: 0, strength: 0 };
-  buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
+  buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
   return out;
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
@@ -307,6 +379,8 @@ const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-
 
 /* ===================== Schule: Fristen-Ampel ===================== */
 const SCHOOL_ART = [["hausaufgabe", "Hausaufgabe"], ["klausur", "Klausur"]];
+const CAL_SCHOOL = "#7c3aed";   // Schule im Kalender (violett)
+const KLAUSUR_COLOR = "#e11d48"; // Klausur-Akzent (rose) — hell; dark nutzt #fb7185
 const daysUntil = (iso) => Math.ceil((new Date(iso + "T00:00:00") - atMidnight(new Date())) / DAY_MS);
 function schoolStatus(item) {
   if (item.erledigt) return { tone: "go", label: "Erledigt" };
@@ -341,7 +415,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed" };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {} };
 const hasStorage = typeof window !== "undefined" && window.storage;
 function usePersistentData() {
   const [data, setData] = useState(DEFAULT_DATA);
@@ -615,15 +689,16 @@ function InfoToggle({ label, children }) {
 }
 // Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind.
 // v5.0: Krank-Tage zählen nicht mit — eine Krankheitswoche bricht die Serie nicht.
-function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode) {
-  const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
+function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides) {
+  // Ausgefallene Einheiten haben load 0 und fallen hier automatisch raus; Ersatz-Einheiten zählen normal mit
+  const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode, overrides).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
   if (!items.length) return true; // komplett entschuldigte Woche: Serie läuft weiter
   return items.filter((i) => done[i.uid]).length / items.length >= 0.8;
 }
-function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode) {
+function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides) {
   let s = 0;
-  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode)) s++; else break; }
-  if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode)) s++;
+  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides)) s++; else break; }
+  if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides)) s++;
   return s;
 }
 const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
@@ -792,7 +867,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const weekLoad = plan.reduce((s, d) => s + d.load, 0);
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
-  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode) : null;
+  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides) : null;
   const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
   // v5.0: Krank-Tage zählen nicht in den Nenner — abgehakte (doch trainierte) Einheiten aber schon
   const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && (it.illness !== "sick" || data.done[it.uid])).length, 0);
@@ -800,7 +875,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const daysToTest = Math.ceil((testDay - atMidnight(today)) / DAY_MS);
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
-  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode]);
+  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
   const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
   const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
   const recoText = dark ? recoBright : recoAccent;
@@ -811,12 +886,12 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
     for (let off = 1; off <= 7; off++) {
       const di = idx + off, wOff = Math.floor(di / 7), dKey = DAYS[di % 7], w = currentWeek + wOff;
       if (w > totalW) return null;
-      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode);
+      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
       const works = p.find((d) => d.day === dKey)?.items.filter((i) => i.load > 0) || [];
       if (works.length) return { label: off === 1 ? "Morgen" : `Als Nächstes · ${DAY_FULL[dKey]}`, items: works };
     }
     return null;
-  }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode]);
+  }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
   const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
   const movePrio = (i, dir) => {
     const next = [...prios]; const j = i + dir;
@@ -1047,7 +1122,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   useEffect(() => { setPhaseView(weekMeta(week).phase); }, [week]);
   const meta = weekMeta(week);
   const effPhase = tournamentPassed ? weekMeta(week).phase : phaseView;
-  const plan = buildWeekPlan(week, effPhase, data.vbSlots, data.illnessLog, data.planEndMode);
+  const plan = buildWeekPlan(week, effPhase, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const ph = PHASE[effPhase];
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const isTestWeek = week >= totalW;
@@ -1143,7 +1218,7 @@ function plannedRunFor(dateISO, illnessLog, planEndMode) {
   const day = DAYS[(d.getDay() + 6) % 7];
   const key = `${week}|${lostTrainingWeeks(illnessLog)}|${planEndMode === "dynamic" ? "d" : "f"}`; // Cache invalidiert sich, wenn sich der Krankheits-Verzug ändert
   const plan = __planRunCache[key] || (__planRunCache[key] = buildWeekPlan(week, undefined, undefined, illnessLog, planEndMode));
-  const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run");
+  const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run" && !i.replacement); // Ersatz-Einheiten haben keinen Plan-Typ
   return run ? { week, day, type: run.type } : null;
 }
 const isQualityType = (t) => t === "int" || t === "tempo" || t === "test";
@@ -1858,27 +1933,27 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const recents = [...sorted].reverse();
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
   const latest = recents[0];
-  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode);
+  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
   const sleepSeries = sorted.slice(-14).map((r) => ({ date: fmtISOshort(r.date), sleep: r.sleep }));
   const tWeek = planWeekOf(TOURNAMENT);
   const weekDays = useMemo(() => {
     const monday = mondayOfWeek(currentWeek);
-    return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode).map((d, i) => {
+    return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).map((d, i) => {
       const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick" })) };
       ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; });
       row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.load; });
       return row;
     });
-  }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode]);
+  }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode, data.overrides]);
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const meso = Array.from({ length: totalW }, (_, i) => {
     const w = i + 1;
-    const bySport = weekLoadBySport(w, data.vbSlots, data.illnessLog, data.planEndMode);
+    const bySport = weekLoadBySport(w, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
     // Erledigt/Entschuldigt je Sportart — nur für vergangene/aktuelle Wochen; Zukunft = reiner Plan (alles "offen")
     const doneBy = { vb: 0, run: 0, strength: 0 }, excusedBy = { vb: 0, run: 0, strength: 0 };
-    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode).forEach((d) => d.items.forEach((it) => {
+    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).forEach((d) => d.items.forEach((it) => {
       if (doneBy[it.sport] == null) return;
       if (data.done[it.uid]) doneBy[it.sport] += it.load || 0;
       else if (it.illness === "sick") excusedBy[it.sport] += it.load || 0;
@@ -2677,7 +2752,7 @@ export default function App() {
   const tournamentPassed = atMidnight(today) > TOURNAMENT;
   const phaseNow = tournamentPassed ? 2 : 1;
   const daysToT = Math.ceil((TOURNAMENT - atMidnight(today)) / DAY_MS);
-  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode]);
+  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
 
   const reset = () => { if (window.confirm("Alle eingetragenen Daten (Läufe, Kraftwerte, Check-ins, Häkchen) und Einstellungen löschen?")) { setData(DEFAULT_DATA); setShowSettings(false); if (hasStorage) window.storage.delete(STORAGE_KEY, false).catch(() => {}); } };
   const manualRefresh = async () => {
