@@ -392,6 +392,14 @@ function schoolStatus(item) {
   if (d <= 3) return { tone: "mid", label: `In ${d} Tag${d === 1 ? "" : "en"}` };
   return { tone: "rest", label: `Fällig ${fmtISOshort(item.faelligkeit)}` };
 }
+// v6.0: Einträge nach Fach gruppieren — innerhalb der Gruppe nach Fälligkeit, leeres Fach als "Ohne Fach" ans Ende
+function groupByFach(list) {
+  const g = {};
+  list.forEach((s) => { const f = (s.fach || "").trim() || "Ohne Fach"; (g[f] = g[f] || []).push(s); });
+  return Object.keys(g)
+    .sort((a, b) => (a === "Ohne Fach") - (b === "Ohne Fach") || a.localeCompare(b, "de"))
+    .map((f) => ({ fach: f, items: g[f].sort((a, b) => a.faelligkeit.localeCompare(b.faelligkeit)) }));
+}
 
 /* ===================== Persistenz ===================== */
 const STORAGE_KEY = "trainings-cockpit-v1";
@@ -826,8 +834,8 @@ function SchoolGlanceCard({ data, goSchule }) {
           <Eyebrow color={col}>Schule</Eyebrow>
           <ChevronRight size={15} style={{ color: col }} />
         </div>
-        <div className="text-sm font-semibold text-slate-800">{open.length} offen{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
-        <div className="text-xs text-slate-500 mt-0.5 truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</div>
+        <div className="text-sm font-semibold text-slate-800">{open.length} offen{(() => { const k = open.filter((s) => s.art === "klausur").length; return k ? ` · ${k} Klausur${k === 1 ? "" : "en"}` : ""; })()}{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
+        <div className="text-xs text-slate-500 mt-0.5 truncate flex items-center gap-1">{next.art === "klausur" && <GraduationCap size={12} className="shrink-0 text-rose-500" />}<span className="truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</span></div>
       </Card>
     </button>
   );
@@ -2817,9 +2825,12 @@ function SchoolTab({ data, setData }) {
     if (item) triggerUndo(item.art === "klausur" ? "Klausur" : "Hausaufgabe", "schoolLog", item);
     if (editingId === id) cancelEdit();
   };
+  const [sortMode, setSortMode] = useState("faellig"); // v6.0: "faellig" (Was ist zuerst dran?) | "fach" (gruppiert)
   const sorted = [...data.schoolLog].sort((a, b) => (a.erledigt === b.erledigt ? a.faelligkeit.localeCompare(b.faelligkeit) : a.erledigt ? 1 : -1));
-  const openCount = data.schoolLog.filter((s) => !s.erledigt).length;
-  const overdueCount = data.schoolLog.filter((s) => !s.erledigt && daysUntil(s.faelligkeit) < 0).length;
+  const openItems = sorted.filter((s) => !s.erledigt);
+  const doneItems = sorted.filter((s) => s.erledigt);
+  const openCount = openItems.length;
+  const overdueCount = openItems.filter((s) => daysUntil(s.faelligkeit) < 0).length;
 
   return (
     <div className="space-y-4">
@@ -2858,32 +2869,58 @@ function SchoolTab({ data, setData }) {
           <Eyebrow>Einträge</Eyebrow>
           <span className="text-[11px] font-num text-slate-400">{openCount} offen{overdueCount ? ` · ${overdueCount} überfällig` : ""}</span>
         </div>
-        {sorted.length ? (
-          <div className="space-y-2">
-            {sorted.map((item) => {
-              const status = schoolStatus(item);
-              const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
-              const col = dark ? bright : accent;
-              return (
-                <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") }}>
-                  <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
-                    {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
-                    <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {item.fach && <span>{item.fach}</span>}
-                      {item.art === "klausur" && <span className="font-semibold" style={{ color: col }}>Klausur</span>}
-                      {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
-                    </div>
-                  </div>
-                  <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
-                  <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
-                </div>
-              );
-            })}
+        {data.schoolLog.length > 1 && (
+          <div className="flex gap-1.5 mb-2.5">
+            {[["faellig", "Nach Fälligkeit"], ["fach", "Nach Fach"]].map(([v, l]) => (
+              <button key={v} onClick={() => setSortMode(v)} className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold border transition ${sortMode === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+            ))}
           </div>
-        ) : <div className="py-8 text-center text-xs text-slate-400">Noch nichts eingetragen.</div>}
+        )}
+        {(() => {
+          // v6.0: Klausuren klar von Hausaufgaben abheben (rose Randbalken + Chip), Liste wahlweise nach Fach gruppiert
+          const renderRow = (item) => {
+            const status = schoolStatus(item);
+            const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
+            const col = dark ? bright : accent;
+            const base = item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") };
+            const klausurEdge = item.art === "klausur" && !item.erledigt && item.id !== editingId ? { borderLeft: `3px solid ${dark ? "#fb7185" : KLAUSUR_COLOR}` } : {};
+            return (
+              <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={{ ...base, ...klausurEdge }}>
+                <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
+                  {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
+                  <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                    {item.fach && sortMode !== "fach" && <span>{item.fach}</span>}
+                    {item.art === "klausur" && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-rose-100 text-rose-700"><GraduationCap size={10} /> Klausur</span>}
+                    {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
+                  </div>
+                </div>
+                <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
+                <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+              </div>
+            );
+          };
+          if (!sorted.length) return <div className="py-8 text-center text-xs text-slate-400">Noch nichts eingetragen.</div>;
+          if (sortMode !== "fach") return <div className="space-y-2">{sorted.map(renderRow)}</div>;
+          return (
+            <div className="space-y-3.5">
+              {groupByFach(openItems).map((g) => (
+                <div key={g.fach}>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">{g.fach} <span className="font-num">· {g.items.length}</span></div>
+                  <div className="space-y-2">{g.items.map(renderRow)}</div>
+                </div>
+              ))}
+              {doneItems.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Erledigt</div>
+                  <div className="space-y-2">{doneItems.map(renderRow)}</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </Card>
 
       <UndoToast undo={undo} onUndo={doUndo} />
@@ -2939,10 +2976,160 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
   );
 }
 
+/* ===================== v6.0: KALENDER (Rückkehr aus v4.2, an v5.x-Logik angepasst) =====================
+   Reine Lese-Ansicht: Monat / Woche / Tag. Training kommt live aus buildWeekPlan (inkl. Krankheits-Verzug,
+   Ausfällen und Ersatz-Einheiten), Schule aus schoolLog (fällig am jeweiligen Tag). Kein setData. */
+function CalRow({ color, label, sub, done, cancelled, big }) {
+  const dark = useDark();
+  return (
+    <div className="flex items-center gap-2.5" style={cancelled ? { opacity: 0.55 } : undefined}>
+      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: done ? (dark ? "#3b4a63" : "#cbd5e1") : color }} />
+      <div className="min-w-0 flex-1">
+        <div className={`${big ? "text-sm" : "text-xs"} font-semibold truncate ${done || cancelled ? "line-through text-slate-400" : "text-slate-800"}`}>{label}</div>
+        {sub && <div className="text-[11px] text-slate-500 truncate">{sub}</div>}
+      </div>
+      {done && <Check size={14} className="text-slate-400 shrink-0" />}
+    </div>
+  );
+}
+function CalLegend() {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+      {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: CAL_SCHOOL }} /> Schule</span>
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: KLAUSUR_COLOR }} /> Klausur</span>
+    </div>
+  );
+}
+const CAL_VIEWS = [["monat", "Monat"], ["woche", "Woche"], ["tag", "Tag"]];
+function CalendarTab({ data }) {
+  const dark = useDark();
+  const [view, setView] = useState("monat");
+  const [anchor, setAnchor] = useState(() => atMidnight(new Date()));
+  const [filter, setFilter] = useState({ training: true, schule: true });
+  const todayIso = toLocalISO(new Date());
+  const days = useMemo(() => (view === "monat" ? monthGrid(anchor) : view === "woche" ? weekGrid(anchor) : [atMidnight(anchor)]), [view, anchor]);
+  const byDay = useMemo(() => {
+    const cache = {};
+    const getPlan = (w) => cache[w] || (cache[w] = buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides));
+    const out = {};
+    for (const d of days) {
+      const iso = toLocalISO(d);
+      const w = rawPlanWeekOf(d, data.illnessLog, data.planEndMode);
+      // Ausgefallene Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel
+      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled) : [];
+      out[iso] = { items, school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
+    }
+    return out;
+  }, [days, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides, data.schoolLog]);
+  const nav = (f) => setAnchor((a) => (view === "monat" ? new Date(a.getFullYear(), a.getMonth() + f, 1) : new Date(atMidnight(a).getTime() + f * (view === "woche" ? 7 : 1) * DAY_MS)));
+  const title = view === "monat" ? anchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" })
+    : view === "woche" ? `Woche ab ${fmtDM(mondayOf(anchor))}`
+    : anchor.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "2-digit" });
+  const dots = (iso) => {
+    const e = byDay[iso]; if (!e) return [];
+    const out = [];
+    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
+    if (filter.schule && e.school.length) out.push(e.school.some((s) => s.art === "klausur" && !s.erledigt) ? KLAUSUR_COLOR : CAL_SCHOOL);
+    return out.slice(0, 4);
+  };
+  const trainingSub = (it, big) => {
+    if (it.cancelled) return "ausgefallen";
+    const parts = [];
+    if (it.replacement) parts.push("Ersatz");
+    if (big && it.desc) parts.push(it.desc); else if (it.dur) parts.push(it.dur);
+    parts.push(`⚡${it.load}`);
+    if (it.illness === "sick" && !data.done[it.uid]) parts.push("entschuldigt (krank)");
+    return parts.join(" · ");
+  };
+  const trainingRows = (e, big) => e.items.map((it) => (
+    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={!!data.done[it.uid]} cancelled={!!it.cancelled}
+      label={it.label + (it.time ? ` · ${it.time}` : "")} sub={trainingSub(it, big)} />
+  ));
+  const schoolRows = (e, big) => e.school.map((s) => (
+    <CalRow key={s.id} big={big} color={s.art === "klausur" ? KLAUSUR_COLOR : CAL_SCHOOL} done={!!s.erledigt}
+      label={s.titel} sub={[s.fach || null, s.art === "klausur" ? "Klausur" : "Hausaufgabe", big ? schoolStatus(s).label : null].filter(Boolean).join(" · ")} />
+  ));
+  return (
+    <div className="space-y-4">
+      <Card className="p-3 space-y-2.5">
+        <div className="flex gap-1 rounded-2xl bg-slate-100 p-1">
+          {CAL_VIEWS.map(([v, l]) => (
+            <button key={v} onClick={() => setView(v)} className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${view === v ? "bg-white shadow-sm text-indigo-700" : "text-slate-500"}`}>{l}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => nav(-1)} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center shrink-0" aria-label="Zurück"><ChevronLeft size={18} /></button>
+          <div className="flex-1 text-center font-display font-bold text-slate-900 capitalize">{title}</div>
+          <button onClick={() => nav(1)} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center shrink-0" aria-label="Weiter"><ChevronRight size={18} /></button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {[["training", "Training", "#6366f1"], ["schule", "Schule", CAL_SCHOOL]].map(([k, l, c]) => (
+            <button key={k} onClick={() => setFilter((f) => ({ ...f, [k]: !f[k] }))} className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold border transition ${filter[k] ? "text-white border-transparent" : "bg-white text-slate-400 border-slate-200"}`} style={filter[k] ? { background: c } : {}}>{l}</button>
+          ))}
+          <button onClick={() => { setAnchor(atMidnight(new Date())); }} className="ml-auto rounded-lg px-2.5 py-1.5 text-[11px] font-semibold border bg-white text-indigo-600 border-slate-200">Heute</button>
+        </div>
+      </Card>
+
+      {view === "monat" && (
+        <Card className="p-3">
+          <div className="grid grid-cols-7 gap-1 mb-1">{DAYS.map((d) => <div key={d} className="text-center text-[10px] font-bold text-slate-400">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {days.map((d) => {
+              const iso = toLocalISO(d), inMonth = d.getMonth() === anchor.getMonth(), isToday = iso === todayIso;
+              return (
+                <button key={iso} onClick={() => { setAnchor(atMidnight(d)); setView("tag"); }}
+                  className={`aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition ${inMonth ? "bg-slate-100" : ""}`}
+                  style={{ opacity: inMonth ? 1 : 0.45, boxShadow: isToday ? "0 0 0 1.5px #6366f1" : "none" }}>
+                  <span className={`text-[11px] font-num font-semibold ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{d.getDate()}</span>
+                  <span className="flex gap-0.5" style={{ height: 6 }}>{dots(iso).map((c, i) => <span key={i} className="rounded-full" style={{ background: c, width: 6, height: 6 }} />)}</span>
+                </button>
+              );
+            })}
+          </div>
+          <CalLegend />
+        </Card>
+      )}
+
+      {view === "woche" && (
+        <div className="space-y-2.5">
+          {days.map((d) => {
+            const iso = toLocalISO(d), e = byDay[iso], isToday = iso === todayIso;
+            const rows = [...(filter.training ? trainingRows(e, false) : []), ...(filter.schule ? schoolRows(e, false) : [])];
+            return (
+              <Card key={iso} className="p-3.5" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={`text-xs font-bold ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{DAY_FULL[DAYS[(d.getDay() + 6) % 7]]}</span>
+                  <span className="text-[11px] text-slate-400 font-num">{fmtDM(d)}</span>
+                  {isToday && <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">Heute</span>}
+                </div>
+                {rows.length ? <div className="space-y-1.5">{rows}</div> : <div className="text-xs text-slate-400">frei</div>}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "tag" && (() => {
+        const iso = toLocalISO(anchor), e = byDay[iso];
+        const hasAny = (filter.training && e.items.length) || (filter.schule && e.school.length);
+        return (
+          <Card className="p-4 space-y-3">
+            {filter.training && e.items.length > 0 && <div><Eyebrow>Training</Eyebrow><div className="mt-2 space-y-2">{trainingRows(e, true)}</div></div>}
+            {filter.schule && e.school.length > 0 && <div><Eyebrow color={CAL_SCHOOL}>Schule</Eyebrow><div className="mt-2 space-y-2">{schoolRows(e, true)}</div></div>}
+            {!hasAny && <div className="py-6 text-center text-xs text-slate-400">Nichts an diesem Tag.</div>}
+          </Card>
+        );
+      })()}
+    </div>
+  );
+}
+
 /* ===================== APP ===================== */
-// Oberste Ebene: Bereiche. Training bündelt die bekannten Tabs; Schule ist ein eigener Bereich.
+// Oberste Ebene: Bereiche. Training bündelt die bekannten Tabs; Kalender und Schule sind eigene Bereiche.
 const AREAS = [
   { id: "training", label: "Training", icon: Dumbbell },
+  { id: "kalender", label: "Kalender", icon: Calendar },
   { id: "schule", label: "Schule", icon: GraduationCap },
 ];
 // Unter-Tabs des Trainings-Bereichs (unverändert, Cockpit ist Start)
@@ -3134,6 +3321,8 @@ export default function App() {
             <div className="py-20 text-center text-sm text-slate-400">Lade …</div>
           ) : showSettings ? (
             <SettingsView data={data} setData={setData} savedAt={savedAt} onRefresh={manualRefresh} refreshing={refreshing} onReset={reset} onClose={() => setShowSettings(false)} />
+          ) : area === "kalender" ? (
+            <CalendarTab data={data} />
           ) : area === "schule" ? (
             <SchoolTab data={data} setData={setData} />
           ) : (
@@ -3147,7 +3336,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v5.1` : "Fortschritt wird automatisch gespeichert · v5.1"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.0` : "Fortschritt wird automatisch gespeichert · v6.0"}</span>
           </footer>
         </main>
       </div>
