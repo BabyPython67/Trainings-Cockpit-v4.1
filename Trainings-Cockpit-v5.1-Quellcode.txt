@@ -9,7 +9,7 @@ import {
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
   Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
-  GraduationCap, Thermometer,
+  GraduationCap, Thermometer, Pencil,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -2488,11 +2488,26 @@ function VBSlotsCard({ data, setData }) {
 function SchoolTab({ data, setData }) {
   const dark = useDark();
   const [form, setForm] = useState({ titel: "", fach: "", faelligkeit: todayISO(), art: "hausaufgabe" });
+  const [editingId, setEditingId] = useState(null);
+  const resetForm = () => setForm((f) => ({ titel: "", fach: "", faelligkeit: todayISO(), art: f.art }));
   const save = () => {
     if (!form.titel.trim()) return;
-    const entry = { id: uid(), titel: form.titel.trim(), fach: form.fach.trim(), faelligkeit: form.faelligkeit, art: form.art, erledigt: false };
-    setData((d) => ({ ...d, schoolLog: [...d.schoolLog, entry] }));
-    setForm((f) => ({ titel: "", fach: "", faelligkeit: todayISO(), art: f.art }));
+    if (editingId) {
+      setData((d) => ({ ...d, schoolLog: d.schoolLog.map((s) => (s.id === editingId ? { ...s, titel: form.titel.trim(), fach: form.fach.trim(), faelligkeit: form.faelligkeit, art: form.art } : s)) }));
+      setEditingId(null);
+    } else {
+      const entry = { id: uid(), titel: form.titel.trim(), fach: form.fach.trim(), faelligkeit: form.faelligkeit, art: form.art, erledigt: false };
+      setData((d) => ({ ...d, schoolLog: [...d.schoolLog, entry] }));
+    }
+    resetForm();
+  };
+  const startEdit = (item) => {
+    setEditingId(item.id);
+    setForm({ titel: item.titel, fach: item.fach, faelligkeit: item.faelligkeit, art: item.art });
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    resetForm();
   };
   const toggleErledigt = (id) => setData((d) => ({ ...d, schoolLog: d.schoolLog.map((s) => (s.id === id ? { ...s, erledigt: !s.erledigt } : s)) }));
   const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
@@ -2500,6 +2515,7 @@ function SchoolTab({ data, setData }) {
     const item = data.schoolLog.find((s) => s.id === id);
     setData((d) => ({ ...d, schoolLog: d.schoolLog.filter((s) => s.id !== id) }));
     if (item) triggerUndo(item.art === "klausur" ? "Klausur" : "Hausaufgabe", "schoolLog", item);
+    if (editingId === id) cancelEdit();
   };
   const sorted = [...data.schoolLog].sort((a, b) => (a.erledigt === b.erledigt ? a.faelligkeit.localeCompare(b.faelligkeit) : a.erledigt ? 1 : -1));
   const openCount = data.schoolLog.filter((s) => !s.erledigt).length;
@@ -2508,7 +2524,7 @@ function SchoolTab({ data, setData }) {
   return (
     <div className="space-y-4">
       <Card className="p-4">
-        <Eyebrow>Neu eintragen</Eyebrow>
+        <Eyebrow>{editingId ? "Eintrag bearbeiten" : "Neu eintragen"}</Eyebrow>
         <div className="mt-3 space-y-2.5">
           <input placeholder="Was? (z. B. Mathe S. 42, Aufgabe 3)" value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="tc-input" />
           <div className="grid grid-cols-2 gap-2.5">
@@ -2526,7 +2542,14 @@ function SchoolTab({ data, setData }) {
               <button key={v} onClick={() => setForm({ ...form, art: v })} className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-semibold border transition ${form.art === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
             ))}
           </div>
-          <button onClick={save} className="w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
+          <div className="flex gap-2">
+            <button onClick={save} className="flex-1 rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5">
+              {editingId ? <Check size={16} /> : <Plus size={16} />} {editingId ? "Speichern" : "Eintragen"}
+            </button>
+            {editingId && (
+              <button onClick={cancelEdit} className="rounded-xl border border-slate-200 text-slate-500 px-4 py-2.5 text-sm font-semibold">Abbrechen</button>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -2542,7 +2565,7 @@ function SchoolTab({ data, setData }) {
               const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
               const col = dark ? bright : accent;
               return (
-                <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") }}>
+                <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") }}>
                   <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
                     {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
                   </button>
@@ -2554,6 +2577,7 @@ function SchoolTab({ data, setData }) {
                       {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
                     </div>
                   </div>
+                  <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
                   <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
                 </div>
               );
@@ -2819,7 +2843,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v5.0` : "Fortschritt wird automatisch gespeichert · v5.0"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v5.1` : "Fortschritt wird automatisch gespeichert · v5.1"}</span>
           </footer>
         </main>
       </div>
