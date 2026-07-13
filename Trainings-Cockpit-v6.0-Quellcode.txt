@@ -512,11 +512,10 @@ function WeekRhythm({ plan, week, highlightToday }) {
         <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
         <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
         <YAxis hide domain={[0, "dataMax + 3"]} />
-        <ReferenceLine y={avg} stroke="#94a3b8" strokeDasharray="3 3" label={chipLabel(`Ø ${avg}`, "#64748b", dark, "above")} />
+        <ReferenceLine y={avg} stroke="#94a3b8" strokeDasharray="3 3" label={chipLabel(`Ø ${avg}`, "#64748b", dark, chipSide(data.map((d) => d.load), avg, Math.max(...data.map((d) => d.load), 1) + 3, "above"))} />
         <Tooltip
-          {...tipProps(dark)}
+          {...tipTop(dark)}
           wrapperStyle={{ zIndex: 40 }}
-          allowEscapeViewBox={{ x: false, y: true }}
           cursor={{ fill: dark ? "#ffffff08" : "#00000006" }}
           labelFormatter={(label, payload) => { const d = payload && payload[0] && payload[0].payload; return d ? DAY_FULL[d.day] : label; }}
           formatter={(value, name, props) => {
@@ -1577,7 +1576,7 @@ function RunProgress({ data, setData, currentWeek }) {
                   <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
                     <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
                     <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipProps(true)} />
+                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
                     <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
                   </LineChart>
                 </ResponsiveContainer></div>
@@ -1697,22 +1696,29 @@ function RunProgress({ data, setData, currentWeek }) {
         <Eyebrow color="#0d9488">Laufökonomie</Eyebrow>
         <div className="text-[10px] text-slate-400 mt-1 mb-2">Schrittfrequenz & Schrittlänge — steigende Frequenz bei stabiler Länge deutet auf bessere Technik hin</div>
         {economySeries.length >= 2 ? (
+          /* v6.0: zwei getrennte Verläufe statt zweier übereinandergelegter Y-Achsen — jede Linie hat
+             jetzt ihre eigene, ehrliche Skala. Gleiches YAxis-width hält beide X-Achsen deckungsgleich. */
           <>
-            <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
-              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+            <div className="text-[10px] font-semibold mt-1" style={{ color: safeText(dark, "#0d9488") }}>Schrittfrequenz (spm)</div>
+            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                <Tooltip {...tipProps(dark)} />
-                <Line yAxisId="left" type="linear" dataKey="cadence" name="Schrittfrequenz (spm)" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
-                <Line yAxisId="right" type="linear" dataKey="stride" name="Schrittlänge (m)" stroke="#a855f7" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: "#a855f7" }} connectNulls />
+                <XAxis dataKey="date" tick={false} height={4} />
+                <YAxis domain={["dataMin-4", "dataMax+4"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => Math.round(v)} />
+                <Tooltip formatter={(v) => [v + " spm", "Schrittfrequenz"]} {...tipTop(dark)} />
+                <Line type="linear" dataKey="cadence" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
               </LineChart>
             </ResponsiveContainer></div>
-            <div className="flex gap-3 text-[10px] text-slate-500 mt-1">
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#0d9488" }} /> Schrittfrequenz</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#a855f7" }} /> Schrittlänge</span>
-            </div>
+            <div className="text-[10px] font-semibold mt-2" style={{ color: safeText(dark, "#a855f7") }}>Schrittlänge (m)</div>
+            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
+                <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                <YAxis domain={["dataMin-0.08", "dataMax+0.08"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
+                <Tooltip formatter={(v) => [v + " m", "Schrittlänge"]} {...tipTop(dark)} />
+                <Line type="linear" dataKey="stride" stroke="#a855f7" strokeWidth={2.5} dot={{ r: 3, fill: "#a855f7" }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer></div>
           </>
         ) : <div className="py-6 text-center text-xs text-slate-400">Noch keine Kadenz-Daten — importiere Garmin-Läufe mit Schrittfrequenz.</div>}
       </Card>
@@ -1727,7 +1733,7 @@ function RunProgress({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
-              <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="ef" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -1747,7 +1753,7 @@ function RunProgress({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} tickFormatter={(v) => Math.round(v)} />
-              <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="est" stroke="none" dot={{ r: 2.5, fill: dark ? "#818cf8" : "#a5b4fc" }} isAnimationActive={false} />
               <Line type="linear" dataKey="trend" stroke="#6366f1" strokeWidth={2.5} dot={false} />
             </LineChart>
@@ -1827,7 +1833,7 @@ function StrengthProgress({ data, setData }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
-              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -1959,6 +1965,41 @@ function IllnessLogCard({ data, setData, triggerUndo }) {
     </Card>
   );
 }
+/* ==== v6.0: eindeutige Zustands-Kodierung für Plan-vs-Ist-Balken ====
+   erledigt = satte Füllung · entschuldigt = Schraffur (45°) · offen = fast leer + gestrichelter Umriss.
+   Reine Deckkraft-Stufen waren auf dem Handy nicht unterscheidbar. */
+function hatchDefs(prefix, dark) {
+  return (
+    <defs>
+      {["vb", "run", "strength"].map((s) => (
+        <pattern key={s} id={`${prefix}-${s}`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="5" height="5" fill={SPORT[s].color} fillOpacity={dark ? 0.26 : 0.18} />
+          <line x1="1" y1="0" x2="1" y2="5" stroke={dark ? SPORT[s].bright : SPORT[s].color} strokeWidth="2" strokeOpacity="0.9" />
+        </pattern>
+      ))}
+    </defs>
+  );
+}
+// Cell-Props je Balkensegment: Umrandung für heute/aktuelle Woche gewinnt; offene Segmente mit Wert
+// bekommen den gestrichelten Sportfarben-Umriss; leere Segmente bleiben komplett unsichtbar.
+function stateCellProps(highlight, openValue, sport, dark) {
+  if (highlight) return { stroke: dark ? "#e2e8f0" : "#0f172a", strokeWidth: 1.5 };
+  if (openValue > 0) return { stroke: dark ? SPORT[sport].bright : SPORT[sport].color, strokeWidth: 1, strokeDasharray: "3 2", strokeOpacity: 0.9 };
+  return { stroke: "none", strokeWidth: 0 };
+}
+function StateLegend({ dark, extra }) {
+  const c = dark ? "#94a3b8" : "#64748b";
+  const sw = { display: "inline-block", width: 10, height: 10, borderRadius: 2, verticalAlign: -1 };
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-400 mt-1 mb-1">
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: c }} /> erledigt</span>
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 5px)` }} /> entschuldigt (krank)</span>
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, border: `1.5px dashed ${c}`, background: "transparent" }} /> offen</span>
+      {extra && <span>· {extra}</span>}
+    </div>
+  );
+}
+
 function RecoveryTab({ data, setData, currentWeek }) {
   const dark = useDark();
   const [form, setForm] = useState({ date: todayISO(), sleep: "", readiness: 0, soreness: 0, note: "", napMin: "", napTime: "frueh_nachmittag", napFeeling: "neutral" });
@@ -2088,8 +2129,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
-              <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipProps(dark)} />
-              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, "below")} />
+              <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipTop(dark)} />
+              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, chipSide(sleepSeries.map((p) => p.sleep), 8, 10, "below"))} />
               <Line type="linear" dataKey="sleep" stroke="#14b8a6" strokeWidth={2.5} dot={{ r: 3, fill: "#14b8a6" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -2099,13 +2140,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
       <Card className="p-4">
         <Eyebrow>Diese Woche: Plan vs. Ist (Woche {currentWeek})</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen · Umrandung = heute</div>
+        <StateLegend dark={dark} extra="Umrandung = heute" />
         <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
           <ComposedChart data={weekDays} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
+            {hatchDefs("hatchWk", dark)}
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={30} allowDecimals={false} />
-            <Tooltip {...tipProps(dark)} cursor={{ fill: dark ? "#ffffff08" : "#00000006" }} content={({ active, payload }) => {
+            <Tooltip {...tipProps(dark)} position={{ y: 0 }} cursor={{ fill: dark ? "#ffffff08" : "#00000006" }} content={({ active, payload }) => {
               if (!active || !payload || !payload.length) return null;
               const d = payload[0].payload;
               return (
@@ -2120,9 +2162,9 @@ function RecoveryTab({ data, setData, currentWeek }) {
               );
             }} />
             {["vb", "run", "strength"].flatMap((s, si) => [
-              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={`url(#hatchWk-${s})`} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.12 : 0.09} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, d[s + "Open"], s, dark)} />)}</Bar>,
             ])}
           </ComposedChart>
         </ResponsiveContainer></div>
@@ -2131,13 +2173,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Wochenbelastung: je Sportart satt = erledigt, blass = offen/geplant */}
       <Card className="p-4">
         <Eyebrow>Wochenbelastung: Plan vs. Ist (Mesozyklus)</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen/geplant · Umrandung = aktuelle Woche</div>
+        <StateLegend dark={dark} extra="Umrandung = aktuelle Woche" />
         <div style={{ width: "100%", height: 170 }}><ResponsiveContainer>
           <ComposedChart data={meso} margin={{ top: 20, right: 4, left: -4, bottom: 0 }}>
+            {hatchDefs("hatchMs", dark)}
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="w" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={0} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-            <Tooltip {...tipProps(dark)} content={({ active, payload, label }) => {
+            <Tooltip {...tipProps(dark)} position={{ y: 0 }} content={({ active, payload, label }) => {
               if (!active || !payload || !payload.length) return null;
               const m = payload[0].payload;
               return (
@@ -2153,16 +2196,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
             }} />
             <ReferenceLine x={`${tWeek}`} stroke="#f59e0b" strokeDasharray="4 4" label={chipLabel("Turnier", "#b45309", dark, "vtop")} />
             {["vb", "run", "strength"].flatMap((s, si) => [
-              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={`url(#hatchMs-${s})`}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.12 : 0.09} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, m[s + "Open"], s, dark)} />)}</Bar>,
             ])}
           </ComposedChart>
         </ResponsiveContainer></div>
         <div className="flex flex-wrap gap-2.5 text-[10px] text-slate-500 mt-1">
           {["vb", "run", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.55 }} /> entschuldigt</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.3 }} /> offen</span>
         </div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
@@ -2392,7 +2433,7 @@ function NutritionTab({ data, setData, plan }) {
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={1} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} />
-            <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipProps(dark)} />
+            <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipTop(dark)} />
             <Bar dataKey="in" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={16} />
             <Line type="stepAfter" dataKey="target" stroke={dark ? "#e2e8f0" : "#0f172a"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
           </ComposedChart>
@@ -2418,8 +2459,8 @@ function NutritionTab({ data, setData, plan }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
-              <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipProps(dark)} />
-              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, "below")} />}
+              <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipTop(dark)} />
+              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, chipSide(wChart.map((p) => p.kg), parseNum(nut.profile.goalWeight), Math.max(...wChart.map((p) => p.kg)) - Math.min(...wChart.map((p) => p.kg)) + 2, "below"))} />}
               <Line type="linear" dataKey="kg" stroke={dark ? "#818cf8" : "#a5b4fc"} strokeWidth={1} dot={{ r: 2 }} />
               <Line type="linear" dataKey="ma" stroke="#0d9488" strokeWidth={2.5} dot={false} />
             </LineChart>
