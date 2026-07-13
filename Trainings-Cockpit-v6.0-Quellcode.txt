@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Cell, ComposedChart, LabelList,
+  Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell, ComposedChart, LabelList,
 } from "recharts";
 import Papa from "papaparse";
 import {
@@ -9,7 +9,7 @@ import {
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
   Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
-  GraduationCap, Thermometer, Pencil,
+  GraduationCap, Thermometer, Pencil, Calendar,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -35,6 +35,9 @@ const tipProps = (dark, fontSize = 12) => ({
   itemStyle: { color: dark ? "#e2e8f0" : "#0f172a" },
   labelStyle: { color: dark ? "#f8fafc" : "#0f172a", fontWeight: 700, marginBottom: 3 },
 });
+// v6.0, iPhone: Tooltip klebt oben an der Chart-Kante statt am Finger — so verdeckt weder der Finger
+// den Datenpunkt noch die Tooltip-Karte die halbe Chart. Für jeden Standard-<Tooltip> verwenden.
+const tipTop = (dark, fontSize = 12) => ({ ...tipProps(dark, fontSize), position: { y: 0 }, allowEscapeViewBox: { x: false, y: false } });
 // Hex → HSL → Hex, um im Dark Mode JEDE hartcodierte Textfarbe automatisch hell genug zu machen —
 // unabhängig davon, welcher Ton irgendwo im Code verwendet wird. Verhindert diese Bugklasse dauerhaft.
 function hexToHsl(hex) {
@@ -68,14 +71,18 @@ const softBg = (dark, accent, lightHex) => (dark ? accent + "26" : lightHex);
 // einem farbigen Balken, dem Gitter oder Freifläche landet — behebt das Kontrastproblem strukturell,
 // statt sich auf Zeichenreihenfolge oder Zufalls-Kontrast mit dem Untergrund zu verlassen.
 // bias "above"/"below" hält zwei Labels auf derselben Chart auch bei nah beieinanderliegenden Werten auseinander.
+// v6.0: "aboveLeft"/"belowLeft" ankern den Chip links — für Charts, deren Datenlinie rechts nahe der
+// Referenzlinie verläuft und den Chip sonst schneiden würde (Auswahl automatisch via chipSide()).
 function chipLabel(text, color, dark, bias = "above") {
   return (props) => {
     const { viewBox } = props;
     if (!viewBox) return null;
     const fontSize = 9, padX = 5, h = 13;
     const w = Math.round(text.length * 5.4 + padX * 2);
-    const x = bias === "vtop" ? Math.max(2, viewBox.x - w / 2) : viewBox.x + viewBox.width - w - 3;
-    const y = bias === "above" ? viewBox.y - h - 3 : bias === "below" ? viewBox.y + 3 : bias === "vtop" ? viewBox.y - h - 2 : viewBox.y - h / 2;
+    const left = bias.endsWith("Left");
+    const vpos = bias === "vtop" ? "vtop" : bias.startsWith("above") ? "above" : bias.startsWith("below") ? "below" : "mid";
+    const x = bias === "vtop" ? Math.max(2, viewBox.x - w / 2) : left ? viewBox.x + 3 : viewBox.x + viewBox.width - w - 3;
+    const y = vpos === "above" ? viewBox.y - h - 3 : vpos === "below" ? viewBox.y + 3 : vpos === "vtop" ? viewBox.y - h - 2 : viewBox.y - h / 2;
     return (
       <g>
         <rect x={x} y={y} width={w} height={h} rx={4} fill={dark ? "#16202f" : "#ffffff"} stroke={dark ? "#2b3950" : "#e2e8f0"} strokeWidth={0.75} />
@@ -83,6 +90,16 @@ function chipLabel(text, color, dark, bias = "above") {
       </g>
     );
   };
+}
+// v6.0: Referenz-Chip automatisch auf die Seite ankern, wo die Datenlinie der Referenz am wenigsten
+// nahe kommt (rechts = Standard). Verglichen werden die ersten und letzten Punkte; span = sichtbare Y-Spanne.
+function chipSide(values, refVal, span, base = "above") {
+  const vals = (values || []).filter((v) => v != null && !isNaN(v));
+  if (!vals.length || !(span > 0)) return base;
+  const gap = (arr) => Math.min(...arr.map((v) => Math.abs(v - refVal)));
+  const right = gap(vals.slice(-3));
+  if (right >= span * 0.2) return base; // rechts frei → Standard
+  return gap(vals.slice(0, 3)) > right ? base + "Left" : base; // sonst die freiere Seite
 }
 function VolleyballIcon({ size = 16, color = "currentColor" }) {
   return (
@@ -150,6 +167,16 @@ function targetPaceSec(type, week) {
   if (type === "int") return week >= 9 ? 280 : 275;
   if (type === "tempo") { if (week <= 3) return 315; if (week <= 7) return 312; if (week <= 11) return 310; return 305; }
   return null;
+}
+/* ===== v6.0: Plan-Zielbereiche (HF-Band aus dem Plan, Pace-Band um die Ziel-Pace) ===== */
+const PACE_BAND_SEC = 15; // Toleranz um die Ziel-Pace (±s) — numerisches Ziel gibt es nur für Intervalle/Tempo
+// HF-Zielbereich aus dem Plan-String: "130–138" → {lo,hi} · "bis 196" → nur Obergrenze
+function parseHrTarget(hr) {
+  if (!hr) return null;
+  const m = String(hr).match(/(\d{2,3})\s*[–-]\s*(\d{2,3})/);
+  if (m) return { lo: +m[1], hi: +m[2] };
+  const b = String(hr).match(/bis\s*(\d{2,3})/i);
+  return b ? { lo: null, hi: +b[1] } : null;
 }
 
 const STRENGTH = {
@@ -229,7 +256,36 @@ function testDateFor(illnessLog, planEndMode) {
   return new Date(mondayOfWeek(planTotalWeeks(illnessLog, planEndMode)).getTime() + 2 * DAY_MS);
 }
 
-function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
+/* ===== v6.0: Kalender-Helfer + Plan-Ziel-Auflösung für erfasste Läufe ===== */
+// Lokales ISO-Datum ohne UTC-Kippkante (toISOString würde nachts den Vortag liefern)
+const toLocalISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// Montag-zuerst 6×7-Monatsraster (42 Zellen, inkl. gedimmter Nachbarmonats-Tage)
+const monthGrid = (anchor) => { const start = mondayOf(new Date(anchor.getFullYear(), anchor.getMonth(), 1)); return Array.from({ length: 42 }, (_, i) => new Date(start.getTime() + i * DAY_MS)); };
+const weekGrid = (anchor) => { const start = mondayOf(anchor); return Array.from({ length: 7 }, (_, i) => new Date(start.getTime() + i * DAY_MS)); };
+// Anders als planWeekOf OHNE Klemmung auf 1..N: null außerhalb des Plans — der Kalender zeigt dort nur Schule.
+function rawPlanWeekOf(d, illnessLog, planEndMode) {
+  const idx = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)) + 1;
+  return idx >= 1 && idx <= planTotalWeeks(illnessLog, planEndMode) ? idx : null;
+}
+// Plan-Ziele (HF-Bereich, Ziel-Pace) für einen erfassten Lauf: bevorzugt der Plan-Lauf des Wochentags,
+// sonst der typgleiche Lauf derselben Woche — deckt verschobene Einheiten ab. Außerhalb des Plans: alles null.
+function planRunTargets(dateISO, type, illnessLog, planEndMode) {
+  const d = new Date(dateISO + "T12:00:00");
+  const week = rawPlanWeekOf(d, illnessLog, planEndMode);
+  if (!week) return { hr: null, hrLabel: null, pace: null, week: null };
+  const effW = week >= planTotalWeeks(illnessLog, planEndMode) ? TOTAL_WEEKS : effectiveWeek(week, illnessLog);
+  const runs = getRunWeek(effW);
+  const sameDay = runs[DAYS[(d.getDay() + 6) % 7]];
+  const item = sameDay && sameDay.type === type ? sameDay : Object.values(runs).find((r) => r.type === type) || null;
+  return { hr: item ? parseHrTarget(item.hr) : null, hrLabel: item ? item.hr : null, pace: targetPaceSec(type, effW), week };
+}
+// Ziel-HF eines Lauftyps in einer (effektiven) Planwoche — für die Fortschritt-je-Typ-Charts
+function hrTargetForType(type, effW) {
+  const r = Object.values(getRunWeek(effW)).find((x) => x.type === type) || null;
+  return { band: r ? parseHrTarget(r.hr) : null, label: r ? r.hr : null };
+}
+
+function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, overrides) {
   const { monday, hasT, phase: autoPhase, tDay } = weekMeta(week);
   const phaseNum = phaseOverride || autoPhase;
   const ph = PHASE[phaseNum];
@@ -240,6 +296,20 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
   const strengthMap = isTestWeek ? {} : (phaseNum === 2 && REGEN[effW]) ? PHASE2_REGEN_STRENGTH : ph.strength;
   const VB = vbMap(vbSlots);
   const mkuid = (day, kind) => `w${week}-${day}-${kind}`; // stabil: hängt nicht an der Position im Tages-Array
+  // v6.0: Ausfälle & Ersatz-Einheiten (data.overrides). Ersatz bekommt die abgeleitete uid "<original>-ersatz" —
+  // deterministisch, kollisionsfrei zum mkuid-Schema und damit stabil abhakbar wie jede Plan-Einheit.
+  const ov = overrides || {};
+  const repsByDay = {};
+  Object.entries(ov).forEach(([ouid, o]) => {
+    if (!ouid.startsWith(`w${week}-`) || !o || o.status !== "ausgefallen" || !o.replacement) return;
+    const r = o.replacement;
+    if (!DAYS.includes(r.day) || !SPORT[r.sport] || r.sport === "rest") return;
+    (repsByDay[r.day] = repsByDay[r.day] || []).push({
+      uid: `${ouid}-ersatz`, sport: r.sport, label: r.label || "Ersatz-Einheit", dur: r.dur || "",
+      desc: `Ersatz für ausgefallenes ${ouid.endsWith("-vb") ? "Volleyball" : "Training"}`,
+      load: Math.max(1, Math.min(9, Number(r.load) || 4)), replacement: true, replacesUid: ouid,
+    });
+  });
 
   return DAYS.map((day) => {
     const items = [];
@@ -266,20 +336,27 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
     }
     if (hasT && day === tDay) items.push({ uid: mkuid(day, "tournament"), sport: "vb", label: "Schulturnier", dur: "Turniertag", desc: "Schule · Bestleistung anstreben", load: 9, tournament: true });
     else if (VB[day] && !(isTestWeek && day === "Mi")) items.push({ uid: mkuid(day, "vb"), sport: "vb", ...VB[day], load: 6 }); // Testwoche: kein Volleyball am Testtag
+    // v6.0: Ersatz-Einheiten am Zieltag einfügen (vor der Krank-Markierung, damit sie sie mit durchläuft),
+    // dann Ausfälle anwenden: Einheit bleibt sichtbar, zählt aber nirgends mehr (load 0 → fällt automatisch
+    // aus Streak, Wochenlast, Meso-/Wochen-Chart und Kalender-Punkten heraus).
+    if (repsByDay[day]) items.push(...repsByDay[day]);
+    items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.load = 0; } });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert), nur Empfehlung/Badge ändern sich
-    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; it.desc += " · Krank gemeldet — Pause empfohlen, höchstens sehr locker"; } });
+    // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
+    const addDesc = (it, txt) => { it.desc = it.desc ? `${it.desc} · ${txt}` : txt; };
+    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; addDesc(it, "Krank gemeldet — Pause empfohlen, höchstens sehr locker"); } });
     else if (sickPhase === "ramp") items.forEach((it) => {
-      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: locker statt hart laufen"; }
-      else if (it.sport === "strength") { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: nur Mobility, nichts Schweres"; }
+      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: locker statt hart laufen"); }
+      else if (it.sport === "strength") { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: nur Mobility, nichts Schweres"); }
     });
     if (items.length === 0) items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag", dur: "Erholung", desc: day === "So" ? "Aktive Erholung optional: Spaziergang, Dehnen" : "Kein Training geplant", load: 0 });
     return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
   });
 }
-const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).reduce((s, d) => s + d.load, 0);
-function weekLoadBySport(week, vbSlots, illnessLog, planEndMode) {
+const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode, overrides) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).reduce((s, d) => s + d.load, 0);
+function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
   const out = { run: 0, vb: 0, strength: 0 };
-  buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
+  buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
   return out;
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
@@ -301,12 +378,15 @@ function dominantSport(items) { let best = items[0], bl = items[0]?.load ?? 0; f
 
 /* ===================== Zeit-Helfer ===================== */
 function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = String(str).trim(); if (s.includes(":")) { const p = s.split(":").map(Number); if (p.some(isNaN)) return null; if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2]; return p[0] * 60 + p[1]; } const n = Number(s.replace(",", ".")); return isNaN(n) ? null : n; }
-const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const m = Math.floor(sec / 60), s = Math.round(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; };
+// v6.0-Fix: erst die Gesamtsekunden runden, dann zerlegen — sonst wird 359,7 s zu "5:60" statt "6:00"
+const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const t = Math.round(sec); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 
 /* ===================== Schule: Fristen-Ampel ===================== */
 const SCHOOL_ART = [["hausaufgabe", "Hausaufgabe"], ["klausur", "Klausur"]];
+const CAL_SCHOOL = "#7c3aed";   // Schule im Kalender (violett)
+const KLAUSUR_COLOR = "#e11d48"; // Klausur-Akzent (rose) — hell; dark nutzt #fb7185
 const daysUntil = (iso) => Math.ceil((new Date(iso + "T00:00:00") - atMidnight(new Date())) / DAY_MS);
 function schoolStatus(item) {
   if (item.erledigt) return { tone: "go", label: "Erledigt" };
@@ -315,6 +395,14 @@ function schoolStatus(item) {
   if (d === 0) return { tone: "mid", label: "Heute fällig" };
   if (d <= 3) return { tone: "mid", label: `In ${d} Tag${d === 1 ? "" : "en"}` };
   return { tone: "rest", label: `Fällig ${fmtISOshort(item.faelligkeit)}` };
+}
+// v6.0: Einträge nach Fach gruppieren — innerhalb der Gruppe nach Fälligkeit, leeres Fach als "Ohne Fach" ans Ende
+function groupByFach(list) {
+  const g = {};
+  list.forEach((s) => { const f = (s.fach || "").trim() || "Ohne Fach"; (g[f] = g[f] || []).push(s); });
+  return Object.keys(g)
+    .sort((a, b) => (a === "Ohne Fach") - (b === "Ohne Fach") || a.localeCompare(b, "de"))
+    .map((f) => ({ fach: f, items: g[f].sort((a, b) => a.faelligkeit.localeCompare(b.faelligkeit)) }));
 }
 
 /* ===================== Persistenz ===================== */
@@ -341,7 +429,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed" };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {} };
 const hasStorage = typeof window !== "undefined" && window.storage;
 function usePersistentData() {
   const [data, setData] = useState(DEFAULT_DATA);
@@ -436,11 +524,10 @@ function WeekRhythm({ plan, week, highlightToday }) {
         <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
         <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
         <YAxis hide domain={[0, "dataMax + 3"]} />
-        <ReferenceLine y={avg} stroke="#94a3b8" strokeDasharray="3 3" label={chipLabel(`Ø ${avg}`, "#64748b", dark, "above")} />
+        <ReferenceLine y={avg} stroke="#94a3b8" strokeDasharray="3 3" label={chipLabel(`Ø ${avg}`, "#64748b", dark, chipSide(data.map((d) => d.load), avg, Math.max(...data.map((d) => d.load), 1) + 3, "above"))} />
         <Tooltip
-          {...tipProps(dark)}
+          {...tipTop(dark)}
           wrapperStyle={{ zIndex: 40 }}
-          allowEscapeViewBox={{ x: false, y: true }}
           cursor={{ fill: dark ? "#ffffff08" : "#00000006" }}
           labelFormatter={(label, payload) => { const d = payload && payload[0] && payload[0].payload; return d ? DAY_FULL[d.day] : label; }}
           formatter={(value, name, props) => {
@@ -615,15 +702,16 @@ function InfoToggle({ label, children }) {
 }
 // Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind.
 // v5.0: Krank-Tage zählen nicht mit — eine Krankheitswoche bricht die Serie nicht.
-function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode) {
-  const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
+function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides) {
+  // Ausgefallene Einheiten haben load 0 und fallen hier automatisch raus; Ersatz-Einheiten zählen normal mit
+  const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode, overrides).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
   if (!items.length) return true; // komplett entschuldigte Woche: Serie läuft weiter
   return items.filter((i) => done[i.uid]).length / items.length >= 0.8;
 }
-function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode) {
+function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides) {
   let s = 0;
-  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode)) s++; else break; }
-  if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode)) s++;
+  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides)) s++; else break; }
+  if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides)) s++;
   return s;
 }
 const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
@@ -694,18 +782,20 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     </button>
   );
   return (
-    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={{ ...(done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}), ...(item.cancelled ? { opacity: 0.6 } : {}) }}>
       <div className="p-3.5 flex items-center gap-3">
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold text-sm ${done ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              <span className={`font-semibold text-sm ${done || item.cancelled ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
+              {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
+              {item.replacement && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersatz</span>}
               {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
               {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
             </div>
-            <div className="text-xs text-slate-500">{item.dur} · {item.desc}</div>
+            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.desc].filter(Boolean).join(" · ")}</div>
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
@@ -748,8 +838,8 @@ function SchoolGlanceCard({ data, goSchule }) {
           <Eyebrow color={col}>Schule</Eyebrow>
           <ChevronRight size={15} style={{ color: col }} />
         </div>
-        <div className="text-sm font-semibold text-slate-800">{open.length} offen{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
-        <div className="text-xs text-slate-500 mt-0.5 truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</div>
+        <div className="text-sm font-semibold text-slate-800">{open.length} offen{(() => { const k = open.filter((s) => s.art === "klausur").length; return k ? ` · ${k} Klausur${k === 1 ? "" : "en"}` : ""; })()}{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
+        <div className="text-xs text-slate-500 mt-0.5 truncate flex items-center gap-1">{next.art === "klausur" && <GraduationCap size={12} className="shrink-0 text-rose-500" />}<span className="truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</span></div>
       </Card>
     </button>
   );
@@ -792,7 +882,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const weekLoad = plan.reduce((s, d) => s + d.load, 0);
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
-  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode) : null;
+  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides) : null;
   const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
   // v5.0: Krank-Tage zählen nicht in den Nenner — abgehakte (doch trainierte) Einheiten aber schon
   const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && (it.illness !== "sick" || data.done[it.uid])).length, 0);
@@ -800,7 +890,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const daysToTest = Math.ceil((testDay - atMidnight(today)) / DAY_MS);
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
-  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode]);
+  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
   const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
   const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
   const recoText = dark ? recoBright : recoAccent;
@@ -811,12 +901,12 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
     for (let off = 1; off <= 7; off++) {
       const di = idx + off, wOff = Math.floor(di / 7), dKey = DAYS[di % 7], w = currentWeek + wOff;
       if (w > totalW) return null;
-      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode);
+      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
       const works = p.find((d) => d.day === dKey)?.items.filter((i) => i.load > 0) || [];
       if (works.length) return { label: off === 1 ? "Morgen" : `Als Nächstes · ${DAY_FULL[dKey]}`, items: works };
     }
     return null;
-  }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode]);
+  }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
   const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
   const movePrio = (i, dir) => {
     const next = [...prios]; const j = i + dir;
@@ -937,9 +1027,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           {inPlan && todayPlan
             ? todayPlan.items.map((it) => (
                 <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                  onExpand={it.sport === "run" ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
+                  onExpand={it.sport === "run" && !it.replacement ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
-                  extra={it.sport === "run" ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
+                  extra={it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -1038,6 +1128,52 @@ function StrengthQuickLog({ item, setData }) {
   );
 }
 
+/* ==== v6.0: Volleyball-Ausfall + Ersatz-Einheit — im aufgeklappten Bereich der VB-Zeile (Woche-Tab) ==== */
+function VbAusfallPanel({ item, day, data, setData }) {
+  const ov = (data.overrides || {})[item.uid];
+  const rep = ov && ov.replacement ? ov.replacement : null;
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ day, sport: "run", label: "", dur: "", load: 4 });
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  const markCancelled = () => setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen" } } }));
+  // Zurücknehmen räumt auch das Häkchen einer evtl. angelegten Ersatz-Einheit mit ab
+  const revert = () => { setShowForm(false); setData((d) => { const o = { ...(d.overrides || {}) }; delete o[item.uid]; const done = { ...d.done }; delete done[`${item.uid}-ersatz`]; return { ...d, overrides: o, done }; }); };
+  const openForm = () => { setForm(rep ? { day: rep.day, sport: rep.sport, label: rep.label || "", dur: rep.dur || "", load: rep.load || 4 } : { day, sport: "run", label: "", dur: "", load: 4 }); setShowForm(true); };
+  const saveRep = () => { setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen", replacement: { day: form.day, sport: form.sport, label: form.label.trim() || "Ersatz-Einheit", dur: form.dur.trim(), load: Number(form.load) || 4 } } } })); setShowForm(false); };
+  if (!item.cancelled) return <button onClick={markCancelled} className={`${btn} bg-white text-slate-600 border-slate-200`}>Training als ausgefallen markieren</button>;
+  return (
+    <div className="space-y-2.5">
+      {rep && !showForm && (
+        <div className="text-xs text-slate-600 flex items-center gap-1.5"><SportGlyph sport={rep.sport} size={13} /> Ersatz: <b>{rep.label}</b> · {DAY_FULL[rep.day]}{rep.dur ? ` · ${rep.dur}` : ""} · ⚡{rep.load}</div>
+      )}
+      {!showForm ? (
+        <div className="flex flex-wrap gap-2">
+          <button onClick={openForm} className={`${btn} text-white border-transparent`} style={{ background: "#7c3aed" }}>{rep ? "Ersatz bearbeiten" : "Ersatz-Einheit planen"}</button>
+          <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ausfall zurücknehmen</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex gap-1.5">{["run", "vb", "strength"].map((s) => (
+            <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: SPORT[s].color } : {}}>
+              <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {SPORT[s].label}
+            </button>
+          ))}</div>
+          <input placeholder="Was machst du stattdessen? (z. B. Lockerer Lauf, Techniktraining)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input" />
+          <div className="flex gap-2">
+            <select value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} className="tc-input" style={{ width: 96, flexShrink: 0 }}>{DAYS.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}</select>
+            <input placeholder="Dauer (z. B. 30 Min)" value={form.dur} onChange={(e) => setForm({ ...form, dur: e.target.value })} className="tc-input" style={{ minWidth: 0 }} />
+            <select value={form.load} onChange={(e) => setForm({ ...form, load: Number(e.target.value) })} className="tc-input" style={{ width: 76, flexShrink: 0 }} aria-label="Belastung">{[1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => <option key={l} value={l}>⚡{l}</option>)}</select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={saveRep} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Speichern</button>
+            <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -1047,7 +1183,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   useEffect(() => { setPhaseView(weekMeta(week).phase); }, [week]);
   const meta = weekMeta(week);
   const effPhase = tournamentPassed ? weekMeta(week).phase : phaseView;
-  const plan = buildWeekPlan(week, effPhase, data.vbSlots, data.illnessLog, data.planEndMode);
+  const plan = buildWeekPlan(week, effPhase, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const ph = PHASE[effPhase];
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const isTestWeek = week >= totalW;
@@ -1089,15 +1225,18 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                 {d.load > 0 && <span className="ml-auto font-num text-[11px] text-slate-400 shrink-0">⚡{d.load}</span>}
               </div>
               <div className="px-3 pb-3 space-y-1.5">
-                {d.items.map((it) => (
-                  <SessionRow key={it.uid} item={it}
-                    done={!!data.done[it.uid]}
-                    onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                    onExpand={(it.ex && it.ex.length) || it.sport === "run" ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
-                    isOpen={open === it.uid}
-                    extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" ? <GarminExport item={it} week={effW} /> : undefined}
-                  />
-                ))}
+                {d.items.map((it) => {
+                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement; // nur echte Vereins-Slots können ausfallen
+                  return (
+                    <SessionRow key={it.uid} item={it}
+                      done={!!data.done[it.uid]}
+                      onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
+                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                      isOpen={open === it.uid}
+                      extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effW} /> : isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : undefined}
+                    />
+                  );
+                })}
               </div>
             </Card>
           );
@@ -1143,7 +1282,7 @@ function plannedRunFor(dateISO, illnessLog, planEndMode) {
   const day = DAYS[(d.getDay() + 6) % 7];
   const key = `${week}|${lostTrainingWeeks(illnessLog)}|${planEndMode === "dynamic" ? "d" : "f"}`; // Cache invalidiert sich, wenn sich der Krankheits-Verzug ändert
   const plan = __planRunCache[key] || (__planRunCache[key] = buildWeekPlan(week, undefined, undefined, illnessLog, planEndMode));
-  const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run");
+  const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run" && !i.replacement); // Ersatz-Einheiten haben keinen Plan-Typ
   return run ? { week, day, type: run.type } : null;
 }
 const isQualityType = (t) => t === "int" || t === "tempo" || t === "test";
@@ -1226,6 +1365,79 @@ function extractLaps(rows) {
 function MiniBadge({ icon, text, color }) {
   return <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-num" style={{ background: color + "1a", color }}>{icon}{text}</span>;
 }
+/* ==== v6.0: Lauf-Detail-Chart — Pace & Puls je Runde mit den Zielbereichen aus dem Plan ====
+   Zwei gestapelte Ein-Achsen-Charts (bewusst keine Doppel-Y-Achse). Kein schwebender Tooltip:
+   Tippen wählt eine Runde, beide Charts markieren sie, die Werte stehen in einer festen
+   Ablesezeile darunter — auf dem iPhone verdeckt so nichts den Datenpunkt. */
+function usePairReadout(rowCount) {
+  const [idx, setIdx] = useState(null);
+  const onPick = (st) => { if (st && st.activeTooltipIndex != null) setIdx(st.activeTooltipIndex); };
+  const sel = rowCount ? Math.min(idx == null ? rowCount - 1 : idx, rowCount - 1) : null;
+  return { sel, onPick };
+}
+function RunDetailChart({ run, illnessLog, planEndMode }) {
+  const dark = useDark();
+  const eff = runEffort(run);
+  const workSet = run.type === "int" && eff && eff.work ? eff.work : null; // Intervalle: nur Arbeitsrunden
+  const rows = (run.laps || [])
+    .filter((l) => (workSet ? workSet.has(l.lap) : true))
+    .map((l) => ({ x: `R${l.lap}`, pace: Math.round(l.pace), hr: l.hr }));
+  const { sel, onPick } = usePairReadout(rows.length);
+  if (rows.length < 2) return null;
+  const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
+  const hasHr = rows.filter((r) => r.hr != null).length >= 2;
+  // Y-Bereiche immer mit dem Zielband vereinigen, damit das Band nie aus dem Chart geclippt wird
+  const paceVals = rows.map((r) => r.pace);
+  let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
+  if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
+  const hrVals = rows.filter((r) => r.hr != null).map((r) => r.hr);
+  let hLo = hrVals.length ? Math.min(...hrVals) : 0, hHi = hrVals.length ? Math.max(...hrVals) : 0;
+  if (tg.hr) { if (tg.hr.lo) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
+  const selRow = sel != null ? rows[sel] : null;
+  const axis = { fontSize: 9, fill: "#94a3b8" };
+  return (
+    <div className="px-4 pt-1 pb-1">
+      <div className="flex items-center gap-2 mb-1 text-[10px]">
+        <span className="font-semibold" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"} im Verlauf</span>
+        {!tg.week && <span style={{ color: dark ? "#64748b" : "#94a3b8" }}>Kein Plan-Ziel für diesen Lauf</span>}
+      </div>
+      <div style={{ width: "100%", height: 120 }}><ResponsiveContainer>
+        <LineChart data={rows} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis dataKey="x" tick={hasHr ? false : axis} height={hasHr ? 4 : undefined} />
+          <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
+          <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+          {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
+          {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
+          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+          {/* nach der Linie gerendert: der Chip (eigener Hintergrund) bleibt lesbar, auch wenn die Daten am Ziel entlanglaufen */}
+          {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
+        </LineChart>
+      </ResponsiveContainer></div>
+      {hasHr && (
+        <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
+          <LineChart data={rows} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+            <XAxis dataKey="x" tick={axis} />
+            <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
+            <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+            {tg.hr && tg.hr.lo && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+            {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
+            <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+            {tg.hr && tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+            {tg.hr && !tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+          </LineChart>
+        </ResponsiveContainer></div>
+      )}
+      {selRow && (
+        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
+          <b>{selRow.x}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}
+          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt die Runde</span>
+        </div>
+      )}
+    </div>
+  );
+}
 // Splits v4: Runden-Liste statt Balkendiagramm. Jede Runde eine Zeile mit exakter Pace,
 // Abweichungsbalken relativ zum Ø Arbeit (links = schneller, rechts = langsamer) und HF.
 // Kein Achsen-/Kontrast-/Clipping-Risiko, exakte Werte direkt lesbar, 380px-tauglich.
@@ -1276,6 +1488,65 @@ function SplitsChart({ laps, run, illnessLog }) {
         })}
       </div>
     </div>
+  );
+}
+
+/* ==== v6.0: Fortschritt je Lauftyp — ersetzt den reinen Pace-Verlauf. Pace allein sagt wenig
+   (härter gearbeitet ≠ fitter); erst Arbeits-Pace UND Puls zusammen zeigen echte Ausdauer:
+   gleiche Pace bei weniger Puls = Fortschritt. Zwei X-synchrone Charts + feste Ablesezeile. ==== */
+function TypeProgressCharts({ series, target, hrTarget }) {
+  const dark = useDark();
+  const { sel, onPick } = usePairReadout(series.length);
+  const hasHr = series.filter((r) => r.hr != null).length >= 2;
+  const paceVals = series.map((r) => r.pace);
+  let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
+  if (target) { pLo = Math.min(pLo, target - PACE_BAND_SEC); pHi = Math.max(pHi, target + PACE_BAND_SEC); }
+  const hrVals = series.filter((r) => r.hr != null).map((r) => r.hr);
+  let hLo = hrVals.length ? Math.min(...hrVals) : 0, hHi = hrVals.length ? Math.max(...hrVals) : 0;
+  const band = hrTarget ? hrTarget.band : null;
+  if (band) { if (band.lo) hLo = Math.min(hLo, band.lo); hHi = Math.max(hHi, band.hi); }
+  const selRow = sel != null ? series[sel] : null;
+  return (
+    <>
+      <div className="text-[10px] font-semibold" style={{ color: safeText(dark, "#4338ca") }}>Arbeits-Pace (niedriger = schneller)</div>
+      <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
+        <LineChart data={series} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis dataKey="date" tick={hasHr ? false : { fontSize: 9, fill: "#94a3b8" }} height={hasHr ? 4 : undefined} />
+          <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
+          <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+          {target && <ReferenceArea y1={target - PACE_BAND_SEC} y2={target + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
+          {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+          {/* nach der Linie: Chip mit eigenem Hintergrund liegt über der Datenlinie */}
+          {target && <ReferenceLine y={target} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(target)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, target, pHi - pLo + 16, "above"))} />}
+        </LineChart>
+      </ResponsiveContainer></div>
+      {hasHr && (
+        <>
+          <div className="text-[10px] font-semibold mt-1.5" style={{ color: safeText(dark, "#e11d48") }}>Ø-Puls des Abschnitts</div>
+          <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
+            <LineChart data={series} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+              <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
+              <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+              {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+              {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+              <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+              {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+              {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+            </LineChart>
+          </ResponsiveContainer></div>
+        </>
+      )}
+      {selRow && (
+        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
+          <b>{selRow.date}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}{selRow.basis ? ` · ${selRow.basis}` : ""}{selRow.fastest ? ` · schnellste ${secToMMSS(Math.round(selRow.fastest))}` : ""}
+          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt den Lauf</span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1403,8 +1674,15 @@ function RunProgress({ data, setData, currentWeek }) {
     });
   };
 
-  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), pace: Math.round(effectivePace(r)) })), [data.runLog, type]); // Intervalle/Tempo: Arbeitsrunden-Pace
-  const target = targetPaceSec(type, effectiveWeek(currentWeek, data.illnessLog));
+  // v6.0: je Lauf der auswertungs-relevante Abschnitt (runEffort) — Pace UND Puls, für die Typ-Charts
+  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
+    const e = runEffort(r);
+    const fastest = r.type === "int" && r.laps ? (classifyLaps(r.laps) || {}).fastest : null;
+    return { date: fmtISOshort(r.date), pace: Math.round(e ? e.pace : r.pace), hr: e && e.hr ? Math.round(e.hr) : (r.hrAvg || null), basis: e ? e.basis : null, fastest: fastest || null };
+  }), [data.runLog, type]);
+  const effWNow = effectiveWeek(currentWeek, data.illnessLog);
+  const target = targetPaceSec(type, effWNow);
+  const hrTarget = hrTargetForType(type, effWNow);
   const list = [...data.runLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
@@ -1449,7 +1727,7 @@ function RunProgress({ data, setData, currentWeek }) {
                   <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
                     <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
                     <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipProps(true)} />
+                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
                     <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
                   </LineChart>
                 </ResponsiveContainer></div>
@@ -1532,19 +1810,10 @@ function RunProgress({ data, setData, currentWeek }) {
         <button onClick={add} className="mt-3 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-1"><Eyebrow>Pace-Verlauf</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
-        <div className="text-[10px] text-slate-400 mb-2">niedriger = schneller</div>
+        <div className="flex items-center justify-between mb-1"><Eyebrow>Fortschritt je Lauftyp</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+        <div className="text-[10px] text-slate-400 mb-2">Gleiche Pace bei weniger Puls (oder schneller bei gleichem Puls) = bessere Ausdauer{(target || hrTarget.band) ? ` · Band = Plan-Ziel (Woche ${effWNow})` : ""}</div>
         {series.length >= 2 ? (
-          <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
-            <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-              <YAxis reversed domain={["dataMin-8", "dataMax+8"]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={secToMMSS} width={46} />
-              <Tooltip formatter={(v) => [secToMMSS(v) + "/km", "Pace"]} {...tipProps(dark)} />
-              {target && <ReferenceLine y={target} stroke="#94a3b8" strokeDasharray="4 4" label={chipLabel("Ziel", "#64748b", dark, "below")} />}
-              <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} />
-            </LineChart>
-          </ResponsiveContainer></div>
+          <TypeProgressCharts key={type} series={series} target={target} hrTarget={hrTarget} />
         ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Art für den Verlauf — importiere oben deine Garmin-CSV oder trag Läufe manuell ein.</div>}
       </Card>
 
@@ -1569,22 +1838,29 @@ function RunProgress({ data, setData, currentWeek }) {
         <Eyebrow color="#0d9488">Laufökonomie</Eyebrow>
         <div className="text-[10px] text-slate-400 mt-1 mb-2">Schrittfrequenz & Schrittlänge — steigende Frequenz bei stabiler Länge deutet auf bessere Technik hin</div>
         {economySeries.length >= 2 ? (
+          /* v6.0: zwei getrennte Verläufe statt zweier übereinandergelegter Y-Achsen — jede Linie hat
+             jetzt ihre eigene, ehrliche Skala. Gleiches YAxis-width hält beide X-Achsen deckungsgleich. */
           <>
-            <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
-              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+            <div className="text-[10px] font-semibold mt-1" style={{ color: safeText(dark, "#0d9488") }}>Schrittfrequenz (spm)</div>
+            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-                <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                <Tooltip {...tipProps(dark)} />
-                <Line yAxisId="left" type="linear" dataKey="cadence" name="Schrittfrequenz (spm)" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
-                <Line yAxisId="right" type="linear" dataKey="stride" name="Schrittlänge (m)" stroke="#a855f7" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: "#a855f7" }} connectNulls />
+                <XAxis dataKey="date" tick={false} height={4} />
+                <YAxis domain={["dataMin-4", "dataMax+4"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => Math.round(v)} />
+                <Tooltip formatter={(v) => [v + " spm", "Schrittfrequenz"]} {...tipTop(dark)} />
+                <Line type="linear" dataKey="cadence" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
               </LineChart>
             </ResponsiveContainer></div>
-            <div className="flex gap-3 text-[10px] text-slate-500 mt-1">
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#0d9488" }} /> Schrittfrequenz</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#a855f7" }} /> Schrittlänge</span>
-            </div>
+            <div className="text-[10px] font-semibold mt-2" style={{ color: safeText(dark, "#a855f7") }}>Schrittlänge (m)</div>
+            <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
+              <LineChart data={economySeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} syncId="economy">
+                <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                <YAxis domain={["dataMin-0.08", "dataMax+0.08"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
+                <Tooltip formatter={(v) => [v + " m", "Schrittlänge"]} {...tipTop(dark)} />
+                <Line type="linear" dataKey="stride" stroke="#a855f7" strokeWidth={2.5} dot={{ r: 3, fill: "#a855f7" }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer></div>
           </>
         ) : <div className="py-6 text-center text-xs text-slate-400">Noch keine Kadenz-Daten — importiere Garmin-Läufe mit Schrittfrequenz.</div>}
       </Card>
@@ -1599,7 +1875,7 @@ function RunProgress({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
-              <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="ef" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -1619,7 +1895,7 @@ function RunProgress({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} tickFormatter={(v) => Math.round(v)} />
-              <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="est" stroke="none" dot={{ r: 2.5, fill: dark ? "#818cf8" : "#a5b4fc" }} isAnimationActive={false} />
               <Line type="linear" dataKey="trend" stroke="#6366f1" strokeWidth={2.5} dot={false} />
             </LineChart>
@@ -1650,7 +1926,10 @@ function RunProgress({ data, setData, currentWeek }) {
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
             )}
-            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />}
+            {hasLaps && isOpen && <>
+              <RunDetailChart run={r} illnessLog={data.illnessLog} planEndMode={data.planEndMode} />
+              <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />
+            </>}
           </div>
         );
       })}</Card>}
@@ -1699,7 +1978,7 @@ function StrengthProgress({ data, setData }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
-              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipProps(dark)} />
+              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -1831,6 +2110,41 @@ function IllnessLogCard({ data, setData, triggerUndo }) {
     </Card>
   );
 }
+/* ==== v6.0: eindeutige Zustands-Kodierung für Plan-vs-Ist-Balken ====
+   erledigt = satte Füllung · entschuldigt = Schraffur (45°) · offen = fast leer + gestrichelter Umriss.
+   Reine Deckkraft-Stufen waren auf dem Handy nicht unterscheidbar. */
+function hatchDefs(prefix, dark) {
+  return (
+    <defs>
+      {["vb", "run", "strength"].map((s) => (
+        <pattern key={s} id={`${prefix}-${s}`} width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="5" height="5" fill={SPORT[s].color} fillOpacity={dark ? 0.26 : 0.18} />
+          <line x1="1" y1="0" x2="1" y2="5" stroke={dark ? SPORT[s].bright : SPORT[s].color} strokeWidth="2" strokeOpacity="0.9" />
+        </pattern>
+      ))}
+    </defs>
+  );
+}
+// Cell-Props je Balkensegment: Umrandung für heute/aktuelle Woche gewinnt; offene Segmente mit Wert
+// bekommen den gestrichelten Sportfarben-Umriss; leere Segmente bleiben komplett unsichtbar.
+function stateCellProps(highlight, openValue, sport, dark) {
+  if (highlight) return { stroke: dark ? "#e2e8f0" : "#0f172a", strokeWidth: 1.5 };
+  if (openValue > 0) return { stroke: dark ? SPORT[sport].bright : SPORT[sport].color, strokeWidth: 1, strokeDasharray: "3 2", strokeOpacity: 0.9 };
+  return { stroke: "none", strokeWidth: 0 };
+}
+function StateLegend({ dark, extra }) {
+  const c = dark ? "#94a3b8" : "#64748b";
+  const sw = { display: "inline-block", width: 10, height: 10, borderRadius: 2, verticalAlign: -1 };
+  return (
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-400 mt-1 mb-1">
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: c }} /> erledigt</span>
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 5px)` }} /> entschuldigt (krank)</span>
+      <span className="inline-flex items-center gap-1"><span style={{ ...sw, border: `1.5px dashed ${c}`, background: "transparent" }} /> offen</span>
+      {extra && <span>· {extra}</span>}
+    </div>
+  );
+}
+
 function RecoveryTab({ data, setData, currentWeek }) {
   const dark = useDark();
   const [form, setForm] = useState({ date: todayISO(), sleep: "", readiness: 0, soreness: 0, note: "", napMin: "", napTime: "frueh_nachmittag", napFeeling: "neutral" });
@@ -1858,27 +2172,27 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const recents = [...sorted].reverse();
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
   const latest = recents[0];
-  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode);
+  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
   const sleepSeries = sorted.slice(-14).map((r) => ({ date: fmtISOshort(r.date), sleep: r.sleep }));
   const tWeek = planWeekOf(TOURNAMENT);
   const weekDays = useMemo(() => {
     const monday = mondayOfWeek(currentWeek);
-    return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode).map((d, i) => {
+    return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).map((d, i) => {
       const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick" })) };
       ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; });
       row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.load; });
       return row;
     });
-  }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode]);
+  }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode, data.overrides]);
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const meso = Array.from({ length: totalW }, (_, i) => {
     const w = i + 1;
-    const bySport = weekLoadBySport(w, data.vbSlots, data.illnessLog, data.planEndMode);
+    const bySport = weekLoadBySport(w, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
     // Erledigt/Entschuldigt je Sportart — nur für vergangene/aktuelle Wochen; Zukunft = reiner Plan (alles "offen")
     const doneBy = { vb: 0, run: 0, strength: 0 }, excusedBy = { vb: 0, run: 0, strength: 0 };
-    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode).forEach((d) => d.items.forEach((it) => {
+    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).forEach((d) => d.items.forEach((it) => {
       if (doneBy[it.sport] == null) return;
       if (data.done[it.uid]) doneBy[it.sport] += it.load || 0;
       else if (it.illness === "sick") excusedBy[it.sport] += it.load || 0;
@@ -1960,8 +2274,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
               <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
-              <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipProps(dark)} />
-              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, "below")} />
+              <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipTop(dark)} />
+              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, chipSide(sleepSeries.map((p) => p.sleep), 8, 10, "below"))} />
               <Line type="linear" dataKey="sleep" stroke="#14b8a6" strokeWidth={2.5} dot={{ r: 3, fill: "#14b8a6" }} />
             </LineChart>
           </ResponsiveContainer></div>
@@ -1971,13 +2285,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
       <Card className="p-4">
         <Eyebrow>Diese Woche: Plan vs. Ist (Woche {currentWeek})</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen · Umrandung = heute</div>
+        <StateLegend dark={dark} extra="Umrandung = heute" />
         <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
           <ComposedChart data={weekDays} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
+            {hatchDefs("hatchWk", dark)}
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={30} allowDecimals={false} />
-            <Tooltip {...tipProps(dark)} cursor={{ fill: dark ? "#ffffff08" : "#00000006" }} content={({ active, payload }) => {
+            <Tooltip {...tipProps(dark)} position={{ y: 0 }} cursor={{ fill: dark ? "#ffffff08" : "#00000006" }} content={({ active, payload }) => {
               if (!active || !payload || !payload.length) return null;
               const d = payload[0].payload;
               return (
@@ -1992,9 +2307,9 @@ function RecoveryTab({ data, setData, currentWeek }) {
               );
             }} />
             {["vb", "run", "strength"].flatMap((s, si) => [
-              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={`url(#hatchWk-${s})`} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.12 : 0.09} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, d[s + "Open"], s, dark)} />)}</Bar>,
             ])}
           </ComposedChart>
         </ResponsiveContainer></div>
@@ -2003,13 +2318,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Wochenbelastung: je Sportart satt = erledigt, blass = offen/geplant */}
       <Card className="p-4">
         <Eyebrow>Wochenbelastung: Plan vs. Ist (Mesozyklus)</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen/geplant · Umrandung = aktuelle Woche</div>
+        <StateLegend dark={dark} extra="Umrandung = aktuelle Woche" />
         <div style={{ width: "100%", height: 170 }}><ResponsiveContainer>
           <ComposedChart data={meso} margin={{ top: 20, right: 4, left: -4, bottom: 0 }}>
+            {hatchDefs("hatchMs", dark)}
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="w" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={0} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-            <Tooltip {...tipProps(dark)} content={({ active, payload, label }) => {
+            <Tooltip {...tipProps(dark)} position={{ y: 0 }} content={({ active, payload, label }) => {
               if (!active || !payload || !payload.length) return null;
               const m = payload[0].payload;
               return (
@@ -2025,16 +2341,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
             }} />
             <ReferenceLine x={`${tWeek}`} stroke="#f59e0b" strokeDasharray="4 4" label={chipLabel("Turnier", "#b45309", dark, "vtop")} />
             {["vb", "run", "strength"].flatMap((s, si) => [
-              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
-              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={`url(#hatchMs-${s})`}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, 0, s, dark)} />)}</Bar>,
+              <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.12 : 0.09} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} {...stateCellProps(m.current, m[s + "Open"], s, dark)} />)}</Bar>,
             ])}
           </ComposedChart>
         </ResponsiveContainer></div>
         <div className="flex flex-wrap gap-2.5 text-[10px] text-slate-500 mt-1">
           {["vb", "run", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.55 }} /> entschuldigt</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.3 }} /> offen</span>
         </div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
@@ -2264,7 +2578,7 @@ function NutritionTab({ data, setData, plan }) {
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={1} />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} />
-            <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipProps(dark)} />
+            <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipTop(dark)} />
             <Bar dataKey="in" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={16} />
             <Line type="stepAfter" dataKey="target" stroke={dark ? "#e2e8f0" : "#0f172a"} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
           </ComposedChart>
@@ -2290,8 +2604,8 @@ function NutritionTab({ data, setData, plan }) {
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
               <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
-              <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipProps(dark)} />
-              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, "below")} />}
+              <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipTop(dark)} />
+              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, chipSide(wChart.map((p) => p.kg), parseNum(nut.profile.goalWeight), Math.max(...wChart.map((p) => p.kg)) - Math.min(...wChart.map((p) => p.kg)) + 2, "below"))} />}
               <Line type="linear" dataKey="kg" stroke={dark ? "#818cf8" : "#a5b4fc"} strokeWidth={1} dot={{ r: 2 }} />
               <Line type="linear" dataKey="ma" stroke="#0d9488" strokeWidth={2.5} dot={false} />
             </LineChart>
@@ -2517,9 +2831,12 @@ function SchoolTab({ data, setData }) {
     if (item) triggerUndo(item.art === "klausur" ? "Klausur" : "Hausaufgabe", "schoolLog", item);
     if (editingId === id) cancelEdit();
   };
+  const [sortMode, setSortMode] = useState("faellig"); // v6.0: "faellig" (Was ist zuerst dran?) | "fach" (gruppiert)
   const sorted = [...data.schoolLog].sort((a, b) => (a.erledigt === b.erledigt ? a.faelligkeit.localeCompare(b.faelligkeit) : a.erledigt ? 1 : -1));
-  const openCount = data.schoolLog.filter((s) => !s.erledigt).length;
-  const overdueCount = data.schoolLog.filter((s) => !s.erledigt && daysUntil(s.faelligkeit) < 0).length;
+  const openItems = sorted.filter((s) => !s.erledigt);
+  const doneItems = sorted.filter((s) => s.erledigt);
+  const openCount = openItems.length;
+  const overdueCount = openItems.filter((s) => daysUntil(s.faelligkeit) < 0).length;
 
   return (
     <div className="space-y-4">
@@ -2558,32 +2875,58 @@ function SchoolTab({ data, setData }) {
           <Eyebrow>Einträge</Eyebrow>
           <span className="text-[11px] font-num text-slate-400">{openCount} offen{overdueCount ? ` · ${overdueCount} überfällig` : ""}</span>
         </div>
-        {sorted.length ? (
-          <div className="space-y-2">
-            {sorted.map((item) => {
-              const status = schoolStatus(item);
-              const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
-              const col = dark ? bright : accent;
-              return (
-                <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") }}>
-                  <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
-                    {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
-                    <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
-                      {item.fach && <span>{item.fach}</span>}
-                      {item.art === "klausur" && <span className="font-semibold" style={{ color: col }}>Klausur</span>}
-                      {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
-                    </div>
-                  </div>
-                  <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
-                  <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
-                </div>
-              );
-            })}
+        {data.schoolLog.length > 1 && (
+          <div className="flex gap-1.5 mb-2.5">
+            {[["faellig", "Nach Fälligkeit"], ["fach", "Nach Fach"]].map(([v, l]) => (
+              <button key={v} onClick={() => setSortMode(v)} className={`flex-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold border transition ${sortMode === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+            ))}
           </div>
-        ) : <div className="py-8 text-center text-xs text-slate-400">Noch nichts eingetragen.</div>}
+        )}
+        {(() => {
+          // v6.0: Klausuren klar von Hausaufgaben abheben (rose Randbalken + Chip), Liste wahlweise nach Fach gruppiert
+          const renderRow = (item) => {
+            const status = schoolStatus(item);
+            const [accent, bright] = RECO_COLORS[status.tone] || RECO_COLORS.none;
+            const col = dark ? bright : accent;
+            const base = item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") };
+            const klausurEdge = item.art === "klausur" && !item.erledigt && item.id !== editingId ? { borderLeft: `3px solid ${dark ? "#fb7185" : KLAUSUR_COLOR}` } : {};
+            return (
+              <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={{ ...base, ...klausurEdge }}>
+                <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
+                  {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
+                  <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                    {item.fach && sortMode !== "fach" && <span>{item.fach}</span>}
+                    {item.art === "klausur" && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-rose-100 text-rose-700"><GraduationCap size={10} /> Klausur</span>}
+                    {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
+                  </div>
+                </div>
+                <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
+                <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+              </div>
+            );
+          };
+          if (!sorted.length) return <div className="py-8 text-center text-xs text-slate-400">Noch nichts eingetragen.</div>;
+          if (sortMode !== "fach") return <div className="space-y-2">{sorted.map(renderRow)}</div>;
+          return (
+            <div className="space-y-3.5">
+              {groupByFach(openItems).map((g) => (
+                <div key={g.fach}>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">{g.fach} <span className="font-num">· {g.items.length}</span></div>
+                  <div className="space-y-2">{g.items.map(renderRow)}</div>
+                </div>
+              ))}
+              {doneItems.length > 0 && (
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Erledigt</div>
+                  <div className="space-y-2">{doneItems.map(renderRow)}</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </Card>
 
       <UndoToast undo={undo} onUndo={doUndo} />
@@ -2639,10 +2982,160 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
   );
 }
 
+/* ===================== v6.0: KALENDER (Rückkehr aus v4.2, an v5.x-Logik angepasst) =====================
+   Reine Lese-Ansicht: Monat / Woche / Tag. Training kommt live aus buildWeekPlan (inkl. Krankheits-Verzug,
+   Ausfällen und Ersatz-Einheiten), Schule aus schoolLog (fällig am jeweiligen Tag). Kein setData. */
+function CalRow({ color, label, sub, done, cancelled, big }) {
+  const dark = useDark();
+  return (
+    <div className="flex items-center gap-2.5" style={cancelled ? { opacity: 0.55 } : undefined}>
+      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: done ? (dark ? "#3b4a63" : "#cbd5e1") : color }} />
+      <div className="min-w-0 flex-1">
+        <div className={`${big ? "text-sm" : "text-xs"} font-semibold truncate ${done || cancelled ? "line-through text-slate-400" : "text-slate-800"}`}>{label}</div>
+        {sub && <div className="text-[11px] text-slate-500 truncate">{sub}</div>}
+      </div>
+      {done && <Check size={14} className="text-slate-400 shrink-0" />}
+    </div>
+  );
+}
+function CalLegend() {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+      {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: CAL_SCHOOL }} /> Schule</span>
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: KLAUSUR_COLOR }} /> Klausur</span>
+    </div>
+  );
+}
+const CAL_VIEWS = [["monat", "Monat"], ["woche", "Woche"], ["tag", "Tag"]];
+function CalendarTab({ data }) {
+  const dark = useDark();
+  const [view, setView] = useState("monat");
+  const [anchor, setAnchor] = useState(() => atMidnight(new Date()));
+  const [filter, setFilter] = useState({ training: true, schule: true });
+  const todayIso = toLocalISO(new Date());
+  const days = useMemo(() => (view === "monat" ? monthGrid(anchor) : view === "woche" ? weekGrid(anchor) : [atMidnight(anchor)]), [view, anchor]);
+  const byDay = useMemo(() => {
+    const cache = {};
+    const getPlan = (w) => cache[w] || (cache[w] = buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides));
+    const out = {};
+    for (const d of days) {
+      const iso = toLocalISO(d);
+      const w = rawPlanWeekOf(d, data.illnessLog, data.planEndMode);
+      // Ausgefallene Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel
+      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled) : [];
+      out[iso] = { items, school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
+    }
+    return out;
+  }, [days, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides, data.schoolLog]);
+  const nav = (f) => setAnchor((a) => (view === "monat" ? new Date(a.getFullYear(), a.getMonth() + f, 1) : new Date(atMidnight(a).getTime() + f * (view === "woche" ? 7 : 1) * DAY_MS)));
+  const title = view === "monat" ? anchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" })
+    : view === "woche" ? `Woche ab ${fmtDM(mondayOf(anchor))}`
+    : anchor.toLocaleDateString("de-DE", { weekday: "long", day: "2-digit", month: "2-digit" });
+  const dots = (iso) => {
+    const e = byDay[iso]; if (!e) return [];
+    const out = [];
+    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
+    if (filter.schule && e.school.length) out.push(e.school.some((s) => s.art === "klausur" && !s.erledigt) ? KLAUSUR_COLOR : CAL_SCHOOL);
+    return out.slice(0, 4);
+  };
+  const trainingSub = (it, big) => {
+    if (it.cancelled) return "ausgefallen";
+    const parts = [];
+    if (it.replacement) parts.push("Ersatz");
+    if (big && it.desc) parts.push(it.desc); else if (it.dur) parts.push(it.dur);
+    parts.push(`⚡${it.load}`);
+    if (it.illness === "sick" && !data.done[it.uid]) parts.push("entschuldigt (krank)");
+    return parts.join(" · ");
+  };
+  const trainingRows = (e, big) => e.items.map((it) => (
+    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={!!data.done[it.uid]} cancelled={!!it.cancelled}
+      label={it.label + (it.time ? ` · ${it.time}` : "")} sub={trainingSub(it, big)} />
+  ));
+  const schoolRows = (e, big) => e.school.map((s) => (
+    <CalRow key={s.id} big={big} color={s.art === "klausur" ? KLAUSUR_COLOR : CAL_SCHOOL} done={!!s.erledigt}
+      label={s.titel} sub={[s.fach || null, s.art === "klausur" ? "Klausur" : "Hausaufgabe", big ? schoolStatus(s).label : null].filter(Boolean).join(" · ")} />
+  ));
+  return (
+    <div className="space-y-4">
+      <Card className="p-3 space-y-2.5">
+        <div className="flex gap-1 rounded-2xl bg-slate-100 p-1">
+          {CAL_VIEWS.map(([v, l]) => (
+            <button key={v} onClick={() => setView(v)} className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${view === v ? "bg-white shadow-sm text-indigo-700" : "text-slate-500"}`}>{l}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => nav(-1)} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center shrink-0" aria-label="Zurück"><ChevronLeft size={18} /></button>
+          <div className="flex-1 text-center font-display font-bold text-slate-900 capitalize">{title}</div>
+          <button onClick={() => nav(1)} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center shrink-0" aria-label="Weiter"><ChevronRight size={18} /></button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {[["training", "Training", "#6366f1"], ["schule", "Schule", CAL_SCHOOL]].map(([k, l, c]) => (
+            <button key={k} onClick={() => setFilter((f) => ({ ...f, [k]: !f[k] }))} className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold border transition ${filter[k] ? "text-white border-transparent" : "bg-white text-slate-400 border-slate-200"}`} style={filter[k] ? { background: c } : {}}>{l}</button>
+          ))}
+          <button onClick={() => { setAnchor(atMidnight(new Date())); }} className="ml-auto rounded-lg px-2.5 py-1.5 text-[11px] font-semibold border bg-white text-indigo-600 border-slate-200">Heute</button>
+        </div>
+      </Card>
+
+      {view === "monat" && (
+        <Card className="p-3">
+          <div className="grid grid-cols-7 gap-1 mb-1">{DAYS.map((d) => <div key={d} className="text-center text-[10px] font-bold text-slate-400">{d}</div>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {days.map((d) => {
+              const iso = toLocalISO(d), inMonth = d.getMonth() === anchor.getMonth(), isToday = iso === todayIso;
+              return (
+                <button key={iso} onClick={() => { setAnchor(atMidnight(d)); setView("tag"); }}
+                  className={`aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 transition ${inMonth ? "bg-slate-100" : ""}`}
+                  style={{ opacity: inMonth ? 1 : 0.45, boxShadow: isToday ? "0 0 0 1.5px #6366f1" : "none" }}>
+                  <span className={`text-[11px] font-num font-semibold ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{d.getDate()}</span>
+                  <span className="flex gap-0.5" style={{ height: 6 }}>{dots(iso).map((c, i) => <span key={i} className="rounded-full" style={{ background: c, width: 6, height: 6 }} />)}</span>
+                </button>
+              );
+            })}
+          </div>
+          <CalLegend />
+        </Card>
+      )}
+
+      {view === "woche" && (
+        <div className="space-y-2.5">
+          {days.map((d) => {
+            const iso = toLocalISO(d), e = byDay[iso], isToday = iso === todayIso;
+            const rows = [...(filter.training ? trainingRows(e, false) : []), ...(filter.schule ? schoolRows(e, false) : [])];
+            return (
+              <Card key={iso} className="p-3.5" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className={`text-xs font-bold ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{DAY_FULL[DAYS[(d.getDay() + 6) % 7]]}</span>
+                  <span className="text-[11px] text-slate-400 font-num">{fmtDM(d)}</span>
+                  {isToday && <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">Heute</span>}
+                </div>
+                {rows.length ? <div className="space-y-1.5">{rows}</div> : <div className="text-xs text-slate-400">frei</div>}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "tag" && (() => {
+        const iso = toLocalISO(anchor), e = byDay[iso];
+        const hasAny = (filter.training && e.items.length) || (filter.schule && e.school.length);
+        return (
+          <Card className="p-4 space-y-3">
+            {filter.training && e.items.length > 0 && <div><Eyebrow>Training</Eyebrow><div className="mt-2 space-y-2">{trainingRows(e, true)}</div></div>}
+            {filter.schule && e.school.length > 0 && <div><Eyebrow color={CAL_SCHOOL}>Schule</Eyebrow><div className="mt-2 space-y-2">{schoolRows(e, true)}</div></div>}
+            {!hasAny && <div className="py-6 text-center text-xs text-slate-400">Nichts an diesem Tag.</div>}
+          </Card>
+        );
+      })()}
+    </div>
+  );
+}
+
 /* ===================== APP ===================== */
-// Oberste Ebene: Bereiche. Training bündelt die bekannten Tabs; Schule ist ein eigener Bereich.
+// Oberste Ebene: Bereiche. Training bündelt die bekannten Tabs; Kalender und Schule sind eigene Bereiche.
 const AREAS = [
   { id: "training", label: "Training", icon: Dumbbell },
+  { id: "kalender", label: "Kalender", icon: Calendar },
   { id: "schule", label: "Schule", icon: GraduationCap },
 ];
 // Unter-Tabs des Trainings-Bereichs (unverändert, Cockpit ist Start)
@@ -2677,7 +3170,7 @@ export default function App() {
   const tournamentPassed = atMidnight(today) > TOURNAMENT;
   const phaseNow = tournamentPassed ? 2 : 1;
   const daysToT = Math.ceil((TOURNAMENT - atMidnight(today)) / DAY_MS);
-  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode]);
+  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
 
   const reset = () => { if (window.confirm("Alle eingetragenen Daten (Läufe, Kraftwerte, Check-ins, Häkchen) und Einstellungen löschen?")) { setData(DEFAULT_DATA); setShowSettings(false); if (hasStorage) window.storage.delete(STORAGE_KEY, false).catch(() => {}); } };
   const manualRefresh = async () => {
@@ -2777,6 +3270,10 @@ export default function App() {
         .tc-dark .bg-amber-400{background-color:#d97706!important;}
         .tc-dark .bg-sky-100{background-color:rgba(14,165,233,.22)!important;}
         .tc-dark .text-sky-700{color:#7dd3fc!important;}
+        .tc-dark .bg-slate-200{background-color:#243146!important;}
+        .tc-dark .bg-violet-100{background-color:rgba(124,58,237,.28)!important;}
+        .tc-dark .text-violet-700{color:#c4b5fd!important;}
+        .tc-dark .text-rose-500{color:#fb7185!important;}
       `}</style>
 
       <div className="tc-shell mx-auto">
@@ -2830,6 +3327,8 @@ export default function App() {
             <div className="py-20 text-center text-sm text-slate-400">Lade …</div>
           ) : showSettings ? (
             <SettingsView data={data} setData={setData} savedAt={savedAt} onRefresh={manualRefresh} refreshing={refreshing} onReset={reset} onClose={() => setShowSettings(false)} />
+          ) : area === "kalender" ? (
+            <CalendarTab data={data} />
           ) : area === "schule" ? (
             <SchoolTab data={data} setData={setData} />
           ) : (
@@ -2843,7 +3342,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v5.1` : "Fortschritt wird automatisch gespeichert · v5.1"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.0` : "Fortschritt wird automatisch gespeichert · v6.0"}</span>
           </footer>
         </main>
       </div>
