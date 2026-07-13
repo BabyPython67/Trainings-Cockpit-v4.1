@@ -1,4 +1,4 @@
-# Trainings-Cockpit v6.0
+# Trainings-Cockpit v6.1
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -20,9 +20,10 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Schule**: Einträge wahlweise nach Fälligkeit oder nach Fach gruppiert; Klausuren deutlich gekennzeichnet (roséfarbener Randbalken + Chip) — auch im Cockpit-Schnellblick und Kalender.
   - **Lauf-Detail-Charts**: im aufgeklappten Lauf zeigen zwei Verläufe Pace und Puls je Runde, mit den Zielbereichen aus dem Plan (HF-Bereich; Ziel-Pace ±15 s bei Intervallen/Tempo) als Band.
   - **Fortschritt je Lauftyp** ersetzt den Pace-Verlauf: Arbeits-Pace und Ø-Puls übereinander, mit denselben Zielbändern — gleiche Pace bei weniger Puls = echte Verbesserung.
-  - **Klarere Charts**: erledigt/entschuldigt/offen jetzt eindeutig (voll/schraffiert/Umriss); Laufökonomie ohne Doppel-Y-Achse; Tooltips an der Chart-Oberkante (iPhone: Finger verdeckt nichts mehr); Beschriftungen weichen der Datenlinie automatisch aus.
+  - **Klarere Charts**: erledigt/entschuldigt/offen jetzt eindeutig (voll/schraffiert/Umriss); Tooltips an der Chart-Oberkante (iPhone: Finger verdeckt nichts mehr); Beschriftungen weichen der Datenlinie automatisch aus.
+- v6.1 – Feedback aus dem ersten Testlauf: das aufgeklappte Ersatz-Formular bei einem ausgefallenen Volleyball-Training war komplett ausgegraut (nur die durchgestrichene Kopfzeile sollte das sein); Laufökonomie zurück zur kombinierten Doppelachsen-Ansicht (im direkten Vergleich bevorzugt).
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v6.0-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v6.1-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
