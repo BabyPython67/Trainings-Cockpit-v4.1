@@ -91,12 +91,15 @@ function chipLabel(text, color, dark, bias = "above") {
     );
   };
 }
-// v6.0: Referenz-Chip automatisch links ankern, wenn die letzten Datenpunkte der Referenz zu nahe
-// kommen — dort (rechts) würde der Chip sonst auf der Datenlinie liegen. span = sichtbare Y-Spanne.
+// v6.0: Referenz-Chip automatisch auf die Seite ankern, wo die Datenlinie der Referenz am wenigsten
+// nahe kommt (rechts = Standard). Verglichen werden die ersten und letzten Punkte; span = sichtbare Y-Spanne.
 function chipSide(values, refVal, span, base = "above") {
-  const tail = (values || []).filter((v) => v != null && !isNaN(v)).slice(-3);
-  const near = span > 0 && tail.some((v) => Math.abs(v - refVal) < span * 0.2);
-  return near ? base + "Left" : base;
+  const vals = (values || []).filter((v) => v != null && !isNaN(v));
+  if (!vals.length || !(span > 0)) return base;
+  const gap = (arr) => Math.min(...arr.map((v) => Math.abs(v - refVal)));
+  const right = gap(vals.slice(-3));
+  if (right >= span * 0.2) return base; // rechts frei → Standard
+  return gap(vals.slice(0, 3)) > right ? base + "Left" : base; // sonst die freiere Seite
 }
 function VolleyballIcon({ size = 16, color = "currentColor" }) {
   return (
@@ -375,7 +378,8 @@ function dominantSport(items) { let best = items[0], bl = items[0]?.load ?? 0; f
 
 /* ===================== Zeit-Helfer ===================== */
 function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = String(str).trim(); if (s.includes(":")) { const p = s.split(":").map(Number); if (p.some(isNaN)) return null; if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2]; return p[0] * 60 + p[1]; } const n = Number(s.replace(",", ".")); return isNaN(n) ? null : n; }
-const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const m = Math.floor(sec / 60), s = Math.round(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; };
+// v6.0-Fix: erst die Gesamtsekunden runden, dann zerlegen — sonst wird 359,7 s zu "5:60" statt "6:00"
+const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const t = Math.round(sec); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 
@@ -1404,9 +1408,10 @@ function RunDetailChart({ run, illnessLog, planEndMode }) {
           <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
           <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
           {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
-          {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
           {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
           <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+          {/* nach der Linie gerendert: der Chip (eigener Hintergrund) bleibt lesbar, auch wenn die Daten am Ziel entlanglaufen */}
+          {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
         </LineChart>
       </ResponsiveContainer></div>
       {hasHr && (
@@ -1417,10 +1422,10 @@ function RunDetailChart({ run, illnessLog, planEndMode }) {
             <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
             <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
             {tg.hr && tg.hr.lo && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
-            {tg.hr && tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
-            {tg.hr && !tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
             {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
             <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+            {tg.hr && tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+            {tg.hr && !tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
           </LineChart>
         </ResponsiveContainer></div>
       )}
@@ -1511,9 +1516,10 @@ function TypeProgressCharts({ series, target, hrTarget }) {
           <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
           <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
           {target && <ReferenceArea y1={target - PACE_BAND_SEC} y2={target + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
-          {target && <ReferenceLine y={target} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(target)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, target, pHi - pLo + 16, "above"))} />}
           {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
           <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+          {/* nach der Linie: Chip mit eigenem Hintergrund liegt über der Datenlinie */}
+          {target && <ReferenceLine y={target} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(target)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, target, pHi - pLo + 16, "above"))} />}
         </LineChart>
       </ResponsiveContainer></div>
       {hasHr && (
@@ -1526,10 +1532,10 @@ function TypeProgressCharts({ series, target, hrTarget }) {
               <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
               <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
               {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
-              {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
-              {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
               {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
               <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+              {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+              {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
             </LineChart>
           </ResponsiveContainer></div>
         </>
