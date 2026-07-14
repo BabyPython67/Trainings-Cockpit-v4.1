@@ -7,7 +7,7 @@ import Papa from "papaparse";
 import {
   Gauge, CalendarDays, TrendingUp, Moon, Dumbbell, Footprints,
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
-  Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
+  Trash2, Heart, RotateCcw, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
   GraduationCap, Thermometer, Pencil, Calendar,
 } from "lucide-react";
@@ -254,6 +254,23 @@ function planTotalWeeks(illnessLog, planEndMode) {
 }
 function testDateFor(illnessLog, planEndMode) {
   return new Date(mondayOfWeek(planTotalWeeks(illnessLog, planEndMode)).getTime() + 2 * DAY_MS);
+}
+// v6.2: Laufplan-Fortschritt fürs Cockpit-Motivationselement. Läuft bewusst OHNE overrides über
+// buildWeekPlan — dieselbe Funktion, die auch die App selbst rendert, bildet Krankheits-Verzug
+// automatisch korrekt ab. WICHTIG: 58 ist NUR der Basisfall ohne Krankheit — bei Krankheit hängt
+// die echte Gesamtzahl vom genauen Verlauf ab (nicht einfach "58 bei dynamic, weniger bei fixed"):
+// effectiveWeek() lässt die zuletzt betroffene Kalenderwoche unverändert und verschiebt erst danach,
+// wodurch je nach Ramp-Überlauf ein Block-Inhalt doppelt (Nachhol-Effekt) oder — bei "fixed" durch
+// den gedeckelten Kalender — ganz wegfallen kann. Deshalb NIE 58 annehmen, immer live zählen.
+function runPlanProgress(illnessLog, planEndMode) {
+  const uids = [];
+  const totalW = planTotalWeeks(illnessLog, planEndMode);
+  for (let w = 1; w <= totalW; w++) {
+    buildWeekPlan(w, undefined, undefined, illnessLog, planEndMode).forEach((d) => d.items.forEach((it) => {
+      if (it.sport === "run" && it.load > 0 && !it.replacement) uids.push(it.uid);
+    }));
+  }
+  return { uids, total: uids.length };
 }
 
 /* ===== v6.0: Kalender-Helfer + Plan-Ziel-Auflösung für erfasste Läufe ===== */
@@ -689,6 +706,39 @@ function estimateVo2max(paceSecPerKm, hrAvg, hrMax) {
   return est >= 25 && est <= 80 ? Math.round(est * 10) / 10 : null;
 }
 const efMetersPerBeat = (paceSec, hr) => (paceSec && hr ? Math.round(((60000 / paceSec) / hr) * 100) / 100 : null);
+// Entkopplungs-Kennzahl (aerobe Drift): vergleicht die Pace-HF-Effizienz der ersten vs. zweiten Hälfte
+// eines Laufs. Positiv = Effizienz sinkt in der zweiten Hälfte (Ermüdung/Drift), negativ = wird effizienter.
+function decouplingPct(rows) {
+  const valid = (rows || []).filter((r) => r.hr != null && r.pace != null);
+  if (valid.length < 4) return null;
+  const mid = Math.floor(valid.length / 2);
+  const efOf = (arr) => { const efs = arr.map((r) => efMetersPerBeat(r.pace, r.hr)).filter(Boolean); return efs.length ? efs.reduce((a, b) => a + b, 0) / efs.length : null; };
+  const ef1 = efOf(valid.slice(0, mid)), ef2 = efOf(valid.slice(mid));
+  if (!ef1 || !ef2) return null;
+  return Math.round(((ef1 - ef2) / ef1) * 1000) / 10;
+}
+
+/* ===================== v6.2: Zeitraum-Filter (pro Chart einzeln wählbar) ===================== */
+// Presets: "u10" = letzte 10 Einheiten, "d14"/"d30"/"d90" = letzte N Tage, "all" = alles.
+const TIME_RANGES = [["u10", "Letzte 10"], ["d14", "Letzte 2 Wochen"], ["d30", "Letzte 30 Tage"], ["d90", "Letzte 90 Tage"], ["all", "Alle"]];
+// rows müssen aufsteigend sortiert sein und ein volles ISO-Datum in .iso tragen (die gekürzte Anzeige-Form
+// "date" reicht nicht — ohne Jahr nicht vergleichbar). Bei kumulativen Reihen (Bestwert-Linie, VO2max-Trend)
+// erst NACH der vollständigen Berechnung anwenden, sonst geht ein außerhalb des Fensters liegender Rekord verloren.
+function applyTimeRange(rows, range) {
+  if (!range || range === "all" || !rows || !rows.length) return rows || [];
+  if (range[0] === "u") return rows.slice(-Number(range.slice(1)));
+  // Kalendertag-genauer Cutoff (nicht uhrzeitabhängig) — "genau N Tage her" zählt immer noch dazu
+  const cutoff = atMidnight(new Date(Date.now() - Number(range.slice(1)) * DAY_MS)).getTime();
+  return rows.filter((r) => new Date(r.iso + "T12:00:00").getTime() >= cutoff);
+}
+function TimeRangeSelect({ value, onChange, daysOnly }) {
+  const opts = daysOnly ? TIME_RANGES.filter(([v]) => v !== "u10") : TIME_RANGES;
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="text-[11px] font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" aria-label="Zeitraum">
+      {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    </select>
+  );
+}
 
 /* ===================== V3: kleiner Info-Aufklapper (Muster wie LoadHelp) ===================== */
 function InfoToggle({ label, children }) {
@@ -893,6 +943,12 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
   const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
+  // v6.2: Laufplan-Fortschritt statt totem externen Link — Gesamtzahl live berechnet (58 nur im Basisfall,
+  // siehe runPlanProgress), damit sie bei Krankheit + planEndMode "fixed" korrekt sinkt statt zu lügen.
+  const runProgress = useMemo(() => runPlanProgress(data.illnessLog, data.planEndMode), [data.illnessLog, data.planEndMode]);
+  const runDone = runProgress.uids.filter((uid) => data.done[uid]).length;
+  const runPct = runProgress.total ? Math.round((runDone / runProgress.total) * 100) : 0;
+  const runMotivation = runPct >= 100 ? "Plan komplett! 🎉" : runPct >= 50 ? "Über die Hälfte geschafft — starke Leistung" : runPct >= 10 ? "Guter Rhythmus, weiter so" : "Los geht's!";
   const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
   const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
   const recoText = dark ? recoBright : recoAccent;
@@ -1091,9 +1147,18 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
         <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#0f766e" icon={<Moon size={13} className="text-teal-600" />} />
       </div>
 
-      <a href="https://babypython67.github.io/5k-training/" target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm">
-        <span className="flex items-center gap-2 text-slate-700"><Footprints size={16} className="text-indigo-500" /> Lauf-Tracker (Einheiten abhaken)</span><ExternalLink size={15} className="text-slate-400" />
-      </a>
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow color="#4338ca">Laufplan-Fortschritt</Eyebrow>
+          <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0"><Footprints size={15} className="text-indigo-600" /></div>
+        </div>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="font-num text-3xl font-bold text-indigo-900">{runDone}</span>
+          <span className="text-sm text-slate-500">von {runProgress.total} Laufeinheiten · {runPct}%</span>
+        </div>
+        <div className="mt-2.5 h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.min(100, runPct)}%` }} /></div>
+        <div className="mt-2 text-xs font-bold text-indigo-600">{runMotivation}</div>
+      </Card>
     </div>
   );
 }
