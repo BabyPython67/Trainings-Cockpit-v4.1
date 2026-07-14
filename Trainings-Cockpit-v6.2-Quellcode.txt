@@ -731,11 +731,12 @@ function applyTimeRange(rows, range) {
   const cutoff = atMidnight(new Date(Date.now() - Number(range.slice(1)) * DAY_MS)).getTime();
   return rows.filter((r) => new Date(r.iso + "T12:00:00").getTime() >= cutoff);
 }
-function TimeRangeSelect({ value, onChange, daysOnly }) {
-  const opts = daysOnly ? TIME_RANGES.filter(([v]) => v !== "u10") : TIME_RANGES;
+function TimeRangeSelect({ value, onChange, daysOnly, only, light }) {
+  const opts = only ? TIME_RANGES.filter(([v]) => only.includes(v)) : daysOnly ? TIME_RANGES.filter(([v]) => v !== "u10") : TIME_RANGES;
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="text-[11px] font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" aria-label="Zeitraum">
-      {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Zeitraum"
+      className={light ? "text-[11px] font-semibold text-indigo-100 bg-white/15 rounded-lg px-2 py-1 border-0" : "text-[11px] font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0"}>
+      {opts.map(([v, l]) => <option key={v} value={v} style={light ? { color: "#0f172a" } : undefined}>{l}</option>)}
     </select>
   );
 }
@@ -1640,11 +1641,17 @@ function RunProgress({ data, setData, currentWeek }) {
       .map((r) => { const q = qualityEffort(r); const pred = q ? riegel5k(q.dist, q.sec) : null; return pred ? { iso: r.date, date: fmtISOshort(r.date), pred, basis: q.basis, dist: q.dist, pace: q.sec / q.dist } : null; })
       .filter(Boolean).sort((a, b) => a.iso.localeCompare(b.iso));
     let best = Infinity, bestInfo = null; const trend = [];
-    preds.forEach((p) => { const isRecord = p.pred < best; if (isRecord) { best = p.pred; bestInfo = p; } trend.push({ date: p.date, pred: best, isRecord }); });
-    const raw = preds.map((p) => ({ date: p.date, pred: p.pred }));
+    // v6.2: die Bestwert-Linie wird über die VOLLSTÄNDIGE Historie berechnet — der Zeitraum-Filter
+    // schneidet erst danach zu, sonst würde ein außerhalb des Fensters liegender Rekord verloren gehen
+    // und die Linie fälschlich neu bei 0 anfangen. iso bleibt deshalb an trend/raw erhalten.
+    preds.forEach((p) => { const isRecord = p.pred < best; if (isRecord) { best = p.pred; bestInfo = p; } trend.push({ iso: p.iso, date: p.date, pred: best, isRecord }); });
+    const raw = preds.map((p) => ({ iso: p.iso, date: p.date, pred: p.pred }));
     return { trend, raw, bestInfo };
   }, [data.runLog]);
-  const predTrend = predData.trend, predRaw = predData.raw, bestInfo = predData.bestInfo;
+  const [predRange, setPredRange] = useState("all");
+  const predTrend = useMemo(() => applyTimeRange(predData.trend, predRange), [predData.trend, predRange]);
+  const predRaw = useMemo(() => applyTimeRange(predData.raw, predRange), [predData.raw, predRange]);
+  const bestInfo = predData.bestInfo;
   const [predView, setPredView] = useState("best"); // "best" = Bestwert-Verlauf, "raw" = Prognose pro Lauf
   const bestPred = bestInfo ? bestInfo.pred : null;
   // Bestzeiten: schnellste effektive Pace je Lauftyp (Intervalle/Tempo = Arbeitsrunden-Pace)
@@ -1742,11 +1749,13 @@ function RunProgress({ data, setData, currentWeek }) {
   };
 
   // v6.0: je Lauf der auswertungs-relevante Abschnitt (runEffort) — Pace UND Puls, für die Typ-Charts
-  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
+  const fullSeries = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
     const e = runEffort(r);
     const fastest = r.type === "int" && r.laps ? (classifyLaps(r.laps) || {}).fastest : null;
-    return { date: fmtISOshort(r.date), pace: Math.round(e ? e.pace : r.pace), hr: e && e.hr ? Math.round(e.hr) : (r.hrAvg || null), basis: e ? e.basis : null, fastest: fastest || null };
+    return { iso: r.date, date: fmtISOshort(r.date), pace: Math.round(e ? e.pace : r.pace), hr: e && e.hr ? Math.round(e.hr) : (r.hrAvg || null), basis: e ? e.basis : null, fastest: fastest || null };
   }), [data.runLog, type]);
+  const [typeRange, setTypeRange] = useState("all");
+  const series = useMemo(() => applyTimeRange(fullSeries, typeRange), [fullSeries, typeRange]);
   const effWNow = effectiveWeek(currentWeek, data.illnessLog);
   const target = targetPaceSec(type, effWNow);
   const hrTarget = hrTargetForType(type, effWNow);
@@ -1784,20 +1793,23 @@ function RunProgress({ data, setData, currentWeek }) {
             </div>
             <div className="text-[11px] text-indigo-200 mt-1.5 font-num">Basis: {bestInfo.basis} · {bestInfo.dist} km @ {secToMMSS(Math.round(bestInfo.pace))}/km ({bestInfo.date})</div>
             {vo2Now && <div className="text-[11px] text-indigo-200 mt-0.5">Fitness-Trend: VO₂max ≈ {vo2Now} {vo2Arrow}</div>}
-            {predTrend.length >= 2 && (
+            {predData.trend.length >= 2 && (
               <>
-                <div className="flex gap-1 mt-2 mb-1">
+                <div className="flex items-center gap-1 mt-2 mb-1">
                   <button onClick={() => setPredView("best")} className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition ${predView === "best" ? "bg-white text-indigo-700" : "bg-white/15 text-indigo-100"}`}>Bestwert</button>
                   <button onClick={() => setPredView("raw")} className={`text-[10px] px-2 py-0.5 rounded-full font-medium transition ${predView === "raw" ? "bg-white text-indigo-700" : "bg-white/15 text-indigo-100"}`}>Pro Lauf</button>
+                  <span className="ml-auto"><TimeRangeSelect value={predRange} onChange={setPredRange} light /></span>
                 </div>
-                <div style={{ width: "100%", height: 100 }}><ResponsiveContainer>
-                  <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
-                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
-                    <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
-                    <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
-                    <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
-                  </LineChart>
-                </ResponsiveContainer></div>
+                {(predView === "best" ? predTrend : predRaw).length >= 2 ? (
+                  <div style={{ width: "100%", height: 100 }}><ResponsiveContainer>
+                    <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
+                      <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
+                      <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
+                      <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
+                      <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
+                    </LineChart>
+                  </ResponsiveContainer></div>
+                ) : <div className="py-4 text-center text-[11px] text-indigo-200/70">Zu wenig Läufe in diesem Zeitraum.</div>}
                 <div className="text-[10px] text-indigo-200/70 mt-1">{predView === "best" ? "Zeigt deinen bisher schnellsten Prognosewert — bleibt flach, solange kein neuer Rekord dazukommt." : "Zeigt die Prognose jedes einzelnen Qualitäts-Laufs, auch wenn sie schlechter als dein Bestwert war."}</div>
               </>
             )}
@@ -1877,11 +1889,17 @@ function RunProgress({ data, setData, currentWeek }) {
         <button onClick={add} className="mt-3 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-1"><Eyebrow>Fortschritt je Lauftyp</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+        <div className="flex items-center justify-between mb-1 gap-1.5 flex-wrap">
+          <Eyebrow>Fortschritt je Lauftyp</Eyebrow>
+          <div className="flex items-center gap-1.5">
+            <TimeRangeSelect value={typeRange} onChange={setTypeRange} />
+            <select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          </div>
+        </div>
         <div className="text-[10px] text-slate-400 mb-2">Gleiche Pace bei weniger Puls (oder schneller bei gleichem Puls) = bessere Ausdauer{(target || hrTarget.band) ? ` · Band = Plan-Ziel (Woche ${effWNow})` : ""}</div>
         {series.length >= 2 ? (
-          <TypeProgressCharts key={type} series={series} target={target} hrTarget={hrTarget} />
-        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Art für den Verlauf — importiere oben deine Garmin-CSV oder trag Läufe manuell ein.</div>}
+          <TypeProgressCharts key={type + typeRange} series={series} target={target} hrTarget={hrTarget} />
+        ) : <div className="py-8 text-center text-xs text-slate-400">{fullSeries.length >= 2 ? "Zu wenig Läufe in diesem Zeitraum." : "Mind. 2 Einträge dieser Art für den Verlauf — importiere oben deine Garmin-CSV oder trag Läufe manuell ein."}</div>}
       </Card>
 
       {/* 2.0: Bestzeiten je Lauftyp */}
@@ -2013,7 +2031,9 @@ function StrengthProgress({ data, setData }) {
     if (item) triggerUndo("Eintrag", "strengthLog", item);
   };
   const unitOf = (name) => (/sprung|jump/i.test(name || "") ? "cm" : "kg"); // 2.0: Sprunghöhe in cm statt kg
-  const series = useMemo(() => data.strengthLog.filter((s) => s.exercise === view && s.weight > 0).sort((a, b) => a.date.localeCompare(b.date)).map((s) => ({ date: fmtISOshort(s.date), weight: s.weight })), [data.strengthLog, view]);
+  const fullSeries = useMemo(() => data.strengthLog.filter((s) => s.exercise === view && s.weight > 0).sort((a, b) => a.date.localeCompare(b.date)).map((s) => ({ iso: s.date, date: fmtISOshort(s.date), weight: s.weight })), [data.strengthLog, view]);
+  const [strengthRange, setStrengthRange] = useState("all");
+  const series = useMemo(() => applyTimeRange(fullSeries, strengthRange), [fullSeries, strengthRange]);
   const list = [...data.strengthLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   return (
     <div className="space-y-4">
@@ -2033,7 +2053,13 @@ function StrengthProgress({ data, setData }) {
         <button onClick={add} className="mt-3 w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-2"><Eyebrow>Gewichtsverlauf</Eyebrow>{names.length > 0 && <select value={view} onChange={(e) => setView(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" style={{ maxWidth: 150 }}>{names.map((n) => <option key={n} value={n}>{n}</option>)}</select>}</div>
+        <div className="flex items-center justify-between mb-2 gap-1.5 flex-wrap">
+          <Eyebrow>Gewichtsverlauf</Eyebrow>
+          <div className="flex items-center gap-1.5">
+            <TimeRangeSelect value={strengthRange} onChange={setStrengthRange} />
+            {names.length > 0 && <select value={view} onChange={(e) => setView(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" style={{ maxWidth: 130 }}>{names.map((n) => <option key={n} value={n}>{n}</option>)}</select>}
+          </div>
+        </div>
         {series.length >= 2 ? (
           <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
             <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
@@ -2044,7 +2070,7 @@ function StrengthProgress({ data, setData }) {
               <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
             </LineChart>
           </ResponsiveContainer></div>
-        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Übung für den Verlauf.</div>}
+        ) : <div className="py-8 text-center text-xs text-slate-400">{fullSeries.length >= 2 ? "Zu wenig Einträge in diesem Zeitraum." : "Mind. 2 Einträge dieser Übung für den Verlauf."}</div>}
       </Card>
       {list.length > 0 && <Card className="divide-y divide-slate-100">{list.map((s) => (
         <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
@@ -2237,7 +2263,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
-  const sleepSeries = sorted.slice(-14).map((r) => ({ date: fmtISOshort(r.date), sleep: r.sleep }));
+  const [sleepRange, setSleepRange] = useState("d14"); // Default entspricht dem bisherigen slice(-14)
+  const sleepSeries = applyTimeRange(sorted.map((r) => ({ iso: r.date, date: fmtISOshort(r.date), sleep: r.sleep })), sleepRange);
   const tWeek = planWeekOf(TOURNAMENT);
   const weekDays = useMemo(() => {
     const monday = mondayOfWeek(currentWeek);
@@ -2329,7 +2356,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
       </Card>
 
       <Card className="p-4">
-        <Eyebrow>Schlaf-Verlauf</Eyebrow>
+        <div className="flex items-center justify-between"><Eyebrow>Schlaf-Verlauf</Eyebrow><TimeRangeSelect value={sleepRange} onChange={setSleepRange} /></div>
         {sleepSeries.length >= 2 ? (
           <div className="mt-2" style={{ width: "100%", height: 170 }}><ResponsiveContainer>
             <LineChart data={sleepSeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
@@ -2341,7 +2368,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
               <Line type="linear" dataKey="sleep" stroke="#14b8a6" strokeWidth={2.5} dot={{ r: 3, fill: "#14b8a6" }} />
             </LineChart>
           </ResponsiveContainer></div>
-        ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Check-ins für den Verlauf.</div>}
+        ) : <div className="py-8 text-center text-xs text-slate-400">{sorted.length >= 2 ? "Zu wenig Check-ins in diesem Zeitraum." : "Mind. 2 Check-ins für den Verlauf."}</div>}
       </Card>
 
       {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
@@ -2549,7 +2576,9 @@ function NutritionTab({ data, setData, plan }) {
   const removeWeight = (id) => { const it = nut.weightLog.find((x) => x.id === id); setData((d) => ({ ...d, nutrition: { ...d.nutrition, weightLog: d.nutrition.weightLog.filter((x) => x.id !== id) } })); if (it) pushUndo("Wiegung", () => setData((d) => ({ ...d, nutrition: { ...d.nutrition, weightLog: [...d.nutrition.weightLog, it] } }))); };
 
   const dayEntries = nut.intake.filter((e) => e.date === entry.date);
-  const days14 = lastNDates(14).map((d) => { const s = sums(d); return { date: fmtISOshort(d), in: s.inn, target: targetOn(d) }; });
+  const [kcalRange, setKcalRange] = useState("d14"); // kalendertag-basiert: Default entspricht bisherigem "Letzte 14 Tage"
+  const kcalDayCount = { d14: 14, d30: 30, d90: 90 }[kcalRange] || 14;
+  const days14 = lastNDates(kcalDayCount).map((d) => { const s = sums(d); return { date: fmtISOshort(d), in: s.inn, target: targetOn(d) }; });
   let streakN = 0; { let d = t; if (!sums(d).inn) d = isoAddDays(d, -1); while (sums(d).inn > 0) { streakN++; d = isoAddDays(d, -1); } }
   const last7 = lastNDates(7);
   const hit7 = last7.filter((d) => { const s = sums(d); if (!s.inn) return false; const tg = targetOn(d); return Math.abs(s.inn - tg) <= 0.1 * tg; }).length;
@@ -2560,7 +2589,8 @@ function NutritionTab({ data, setData, plan }) {
   const weekBudget = weekIso.reduce((s, d) => s + (d <= t ? targetOn(d) : kplan.target), 0) - weekIso.reduce((s, d) => s + sums(d).inn, 0);
   const wSorted = [...nut.weightLog].sort((a, b) => a.date.localeCompare(b.date));
   const wMa = ma7w(wSorted);
-  const wChart = wMa.slice(-30).map((w) => ({ date: fmtISOshort(w.date), kg: w.kg, ma: w.ma }));
+  const [weightRange, setWeightRange] = useState("d30"); // Default entspricht dem bisherigen slice(-30)
+  const wChart = applyTimeRange(wMa.map((w) => ({ iso: w.date, date: fmtISOshort(w.date), kg: w.kg, ma: w.ma })), weightRange);
   let wTrend = null;
   if (wMa.length >= 2) { const span = (new Date(wMa[wMa.length - 1].date) - new Date(wMa[0].date)) / DAY_MS; if (span >= 8) wTrend = Math.round(((wMa[wMa.length - 1].ma - wMa[0].ma) / span) * 7 * 100) / 100; }
   // Realitäts-Check: echten Tagesverbrauch aus Essen + Gewichtsverlauf schätzen (21-Tage-Fenster)
@@ -2634,7 +2664,7 @@ function NutritionTab({ data, setData, plan }) {
       </Card>
 
       <Card className="p-4">
-        <Eyebrow>Letzte 14 Tage</Eyebrow>
+        <div className="flex items-center justify-between"><Eyebrow>Kalorien-Verlauf</Eyebrow><TimeRangeSelect value={kcalRange} onChange={setKcalRange} only={["d14", "d30", "d90"]} /></div>
         <div style={{ width: "100%", height: 150 }} className="mt-1"><ResponsiveContainer>
           <ComposedChart data={days14} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
@@ -2655,7 +2685,13 @@ function NutritionTab({ data, setData, plan }) {
       </Card>
 
       <Card className="p-4">
-        <div className="flex items-baseline justify-between"><Eyebrow color="#0d9488">Gewicht</Eyebrow>{wTrend != null && <span className="text-[10.5px] font-num text-slate-500">{wTrend > 0 ? "+" : ""}{wTrend} kg/Woche (Trend)</span>}</div>
+        <div className="flex items-baseline justify-between gap-1.5 flex-wrap">
+          <Eyebrow color="#0d9488">Gewicht</Eyebrow>
+          <div className="flex items-center gap-1.5">
+            {wTrend != null && <span className="text-[10.5px] font-num text-slate-500">{wTrend > 0 ? "+" : ""}{wTrend} kg/Woche (Trend)</span>}
+            <TimeRangeSelect value={weightRange} onChange={setWeightRange} />
+          </div>
+        </div>
         <div className="mt-2 flex gap-2">
           <input inputMode="decimal" placeholder="heute (kg)" value={wInput} onChange={(e) => setWInput(e.target.value)} className="tc-input font-num" />
           <button onClick={addWeight} className="h-11 w-11 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
@@ -2672,7 +2708,7 @@ function NutritionTab({ data, setData, plan }) {
               <Line type="linear" dataKey="ma" stroke="#0d9488" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer></div>
-        ) : <div className="py-4 text-center text-xs text-slate-400 mt-1">Ab 2 Wiegungen erscheint hier dein Verlauf mit 7-Tage-Schnitt — die Tageszahl schwankt, der Schnitt zählt.</div>}
+        ) : <div className="py-4 text-center text-xs text-slate-400 mt-1">{wMa.length >= 2 ? "Zu wenig Wiegungen in diesem Zeitraum." : "Ab 2 Wiegungen erscheint hier dein Verlauf mit 7-Tage-Schnitt — die Tageszahl schwankt, der Schnitt zählt."}</div>}
         {wSorted.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1.5">{[...wSorted].slice(-4).reverse().map((w) => <span key={w.id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10.5px] font-num text-slate-600">{fmtISOshort(w.date)} · {w.kg} kg <button onClick={() => removeWeight(w.id)} className="text-slate-300"><Trash2 size={11} /></button></span>)}</div>
         )}
