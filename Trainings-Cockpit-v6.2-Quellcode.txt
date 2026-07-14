@@ -1106,12 +1106,14 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
 
       <div className="tc-tablet-2col">
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-1"><Eyebrow>Wochenrhythmus</Eyebrow><button onClick={goWeek} className="text-[11px] font-semibold text-indigo-700 inline-flex items-center gap-0.5">Wochenplan <ChevronRight size={13} /></button></div>
-        <div className="text-[11px] text-slate-400 font-num mb-1">
-          ⚡{weekLoad} diese Woche
+        <div className="flex items-center justify-between mb-1.5"><Eyebrow>Wochenrhythmus</Eyebrow><button onClick={goWeek} className="text-[11px] font-semibold text-indigo-700 inline-flex items-center gap-0.5">Wochenplan <ChevronRight size={13} /></button></div>
+        {/* v6.2 Motivations-Audit: Wochenlast war reiner kleiner grauer Fließtext — jetzt eine echte Zahl mit Trend */}
+        <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
+          <span className="font-num text-2xl font-bold leading-none text-slate-800">⚡{weekLoad}</span>
+          <span className="text-xs text-slate-400">diese Woche</span>
           {prevWeekLoad != null && (
-            <span className="text-slate-400">
-              {" "}· {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} letzte Woche
+            <span className={`ml-auto text-xs font-bold font-num ${weekLoad > prevWeekLoad * 1.1 ? "text-amber-600" : weekLoad < prevWeekLoad * 0.9 ? "text-slate-400" : "text-teal-600"}`}>
+              {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} letzte Woche
             </span>
           )}
         </div>
@@ -2072,6 +2074,12 @@ function StrengthProgress({ data, setData }) {
     if (item) triggerUndo("Eintrag", "strengthLog", item);
   };
   const unitOf = (name) => (/sprung|jump/i.test(name || "") ? "cm" : "kg"); // 2.0: Sprunghöhe in cm statt kg
+  // v6.2 Motivations-Audit: Laufen hat Bestzeiten-Tiles, Kraft hatte gar keine Bestwerte — nachgezogen
+  const strengthPbs = useMemo(() => {
+    const m = {};
+    data.strengthLog.forEach((s) => { if (s.weight > 0 && (!m[s.exercise] || s.weight > m[s.exercise].weight)) m[s.exercise] = s; });
+    return m;
+  }, [data.strengthLog]);
   const fullSeries = useMemo(() => data.strengthLog.filter((s) => s.exercise === view && s.weight > 0).sort((a, b) => a.date.localeCompare(b.date)).map((s) => ({ iso: s.date, date: fmtISOshort(s.date), weight: s.weight })), [data.strengthLog, view]);
   const [strengthRange, setStrengthRange] = useState("all");
   const series = useMemo(() => applyTimeRange(fullSeries, strengthRange), [fullSeries, strengthRange]);
@@ -2093,6 +2101,20 @@ function StrengthProgress({ data, setData }) {
         </div>
         <button onClick={add} className="mt-3 w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
+      {Object.keys(strengthPbs).length > 0 && (
+        <Card className="p-4">
+          <Eyebrow>Bestwerte</Eyebrow>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {Object.entries(strengthPbs).map(([ex, s]) => (
+              <div key={ex} className="rounded-xl bg-slate-100 p-2.5">
+                <div className="text-[11px] font-semibold text-slate-500 truncate">{ex}</div>
+                <div className="font-num font-bold text-slate-800">{s.weight} {unitOf(ex)}</div>
+                <div className="text-[10px] text-slate-400 font-num">{fmtISOshort(s.date)}{s.reps ? ` · ${s.reps} Wdh.` : ""}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-2 gap-1.5 flex-wrap">
           <Eyebrow>Gewichtsverlauf</Eyebrow>
