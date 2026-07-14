@@ -1,4 +1,4 @@
-# Trainings-Cockpit v6.1
+# Trainings-Cockpit v6.2
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -22,8 +22,14 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Fortschritt je Lauftyp** ersetzt den Pace-Verlauf: Arbeits-Pace und Ø-Puls übereinander, mit denselben Zielbändern — gleiche Pace bei weniger Puls = echte Verbesserung.
   - **Klarere Charts**: erledigt/entschuldigt/offen jetzt eindeutig (voll/schraffiert/Umriss); Tooltips an der Chart-Oberkante (iPhone: Finger verdeckt nichts mehr); Beschriftungen weichen der Datenlinie automatisch aus.
 - v6.1 – Feedback aus dem ersten Testlauf: das aufgeklappte Ersatz-Formular bei einem ausgefallenen Volleyball-Training war komplett ausgegraut (nur die durchgestrichene Kopfzeile sollte das sein); Laufökonomie zurück zur kombinierten Doppelachsen-Ansicht (im direkten Vergleich bevorzugt).
+- v6.2 – Weiteres Feedback-Bündel:
+  - **Cockpit**: toter externer „Lauf-Tracker"-Link ersetzt durch eine große Fortschrittskarte „Laufplan-Fortschritt" (X von Y Laufeinheiten, live berechnet — 58 ist nur der Basisfall ohne Krankheit; je nach Krankheitsverlauf kann die echte Zahl höher, z. B. durch einen Nachhol-Effekt bei „dynamic", oder niedriger liegen, z. B. durch die Kürzung bei „fixed").
+  - **Laufökonomie, Pace-HF-Verhältnis und VO₂max-Schätzung** in einer Karte mit Segment-Umschalter statt drei einzelnen Cards; Laufökonomie und Pace-HF zusätzlich nach Lauftyp filterbar; beide bekommen (wie VO₂max) einen fett hervorgehobenen „aktueller Wert"-Kopf.
+  - **Zeitraum-Filter** (Letzte 10 Einheiten / 2 Wochen / 30 Tage / 90 Tage / Alle) an praktisch jedem Verlaufs-Chart, jeweils einzeln wählbar: 5K-Prognose, Fortschritt je Lauftyp, die drei Smart-Charts, Kraftwerte, Schlaf-Verlauf, Gewicht, Kalorien-Verlauf.
+  - **Motivations-Feinschliff**: Wochenrhythmus-Vergleich jetzt als fette Zahl mit Trend-Badge statt kleinem grauem Text; neue „Bestwerte"-Karte bei den Kraftwerten (gab es bei Laufen schon, bei Kraft bisher nicht).
+  - **Lauf-Detail neu gedacht**: statt zwei getrennter Pace-/Puls-Verläufe je Runde jetzt ein Pace-Puls-Streudiagramm (chronologisch verbunden, Farbverlauf hell→rose = früh→spät im Lauf) plus eine Entkopplungs-Kennzahl („+X % HF-Drift") — zeigt den Bezug zwischen Pace und Puls direkt, nicht nur beide Werte nebeneinander.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v6.1-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v6.2-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
