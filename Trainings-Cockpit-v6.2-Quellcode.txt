@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell, ComposedChart, LabelList,
+  ScatterChart, Scatter,
 } from "recharts";
 import Papa from "papaparse";
 import {
@@ -61,6 +62,14 @@ function hslToHex(h, s, l) {
 function safeText(dark, hex) {
   if (!dark || !hex || hex[0] !== "#") return hex;
   try { const [h, s, l] = hexToHsl(hex); return hslToHex(h, Math.min(Math.max(s, 40), 85), Math.max(l, 72)); } catch (_) { return hex; }
+}
+// v6.2: lineare Interpolation zwischen zwei Hex-Farben (t=0 → a, t=1 → b) — für den chronologischen
+// Farbverlauf im Pace-Puls-Streudiagramm (RunDetailChart).
+function lerpColor(a, b, t) {
+  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+  const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * Math.min(1, Math.max(0, t))));
+  return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 // Getönte Info-Panels: hell = Pastell, dunkel = transluzenter Akzent auf dunklem Grund
 const panel = (dark, accent, lightBg, lightBorder) => (dark
@@ -1445,66 +1454,99 @@ function usePairReadout(rowCount) {
   const sel = rowCount ? Math.min(idx == null ? rowCount - 1 : idx, rowCount - 1) : null;
   return { sel, onPick };
 }
+// v6.2: Pace-Puls-Streudiagramm statt zwei getrennter Verläufe — zeigt den BEZUG zwischen beiden
+// Werten direkt (nicht nur beide Verläufe nebeneinander): X=Pace, Y=Puls, ein Punkt je Runde,
+// chronologisch verbunden, Farbe hell→rose = früh→spät. Dazu die Entkopplungs-Kennzahl (decouplingPct).
 function RunDetailChart({ run, illnessLog, planEndMode }) {
   const dark = useDark();
   const eff = runEffort(run);
   const workSet = run.type === "int" && eff && eff.work ? eff.work : null; // Intervalle: nur Arbeitsrunden
   const rows = (run.laps || [])
     .filter((l) => (workSet ? workSet.has(l.lap) : true))
-    .map((l) => ({ x: `R${l.lap}`, pace: Math.round(l.pace), hr: l.hr }));
-  const { sel, onPick } = usePairReadout(rows.length);
+    .map((l, i) => ({ idx: i, lap: l.lap, pace: Math.round(l.pace), hr: l.hr }));
   if (rows.length < 2) return null;
   const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
   const hasHr = rows.filter((r) => r.hr != null).length >= 2;
-  // Y-Bereiche immer mit dem Zielband vereinigen, damit das Band nie aus dem Chart geclippt wird
+  const decoupling = hasHr ? decouplingPct(rows) : null;
+  const total = rows.length;
+  const dotColor = (i) => lerpColor("#a5b4fc", "#e11d48", total > 1 ? i / (total - 1) : 0);
+
+  if (!hasHr) {
+    // Fallback ohne Pulsdaten: Streudiagramm braucht zwei Achsen — hier bleibt nur die Pace je Runde
+    const paceVals = rows.map((r) => r.pace);
+    let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
+    if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
+    return (
+      <div className="px-4 pt-1 pb-1">
+        <div className="text-[10px] font-semibold mb-1" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"} im Verlauf · keine Pulsdaten je Runde</div>
+        <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
+          <LineChart data={rows.map((r) => ({ x: `R${r.lap}`, pace: r.pace }))} margin={{ top: 16, right: 8, left: -4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+            <XAxis dataKey="x" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+            <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
+            <Tooltip formatter={(v) => [secToMMSS(v) + "/km", "Pace"]} {...tipTop(dark)} />
+            {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
+            <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+            {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
+          </LineChart>
+        </ResponsiveContainer></div>
+      </div>
+    );
+  }
+
   const paceVals = rows.map((r) => r.pace);
   let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
   if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
+  pLo -= 6; pHi += 6;
   const hrVals = rows.filter((r) => r.hr != null).map((r) => r.hr);
-  let hLo = hrVals.length ? Math.min(...hrVals) : 0, hHi = hrVals.length ? Math.max(...hrVals) : 0;
-  if (tg.hr) { if (tg.hr.lo) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
-  const selRow = sel != null ? rows[sel] : null;
-  const axis = { fontSize: 9, fill: "#94a3b8" };
+  let hLo = Math.min(...hrVals), hHi = Math.max(...hrVals);
+  if (tg.hr) { if (tg.hr.lo != null) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
+  hLo = Math.max(0, hLo - 6); hHi += 6;
+
+  const renderDot = (props) => {
+    const { cx, cy, payload } = props;
+    const isStart = payload.idx === 0, isEnd = payload.idx === total - 1;
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={isStart || isEnd ? 5 : 4} fill={dotColor(payload.idx)} stroke={dark ? "#0b1220" : "#fff"} strokeWidth={1.2} />
+        {isStart && <text x={cx} y={cy - 9} textAnchor="middle" fontSize={9} fontWeight={700} fill={safeText(dark, "#4338ca")}>Start</text>}
+        {isEnd && <text x={cx} y={cy - 9} textAnchor="middle" fontSize={9} fontWeight={700} fill={safeText(dark, "#e11d48")}>Ende</text>}
+      </g>
+    );
+  };
+
   return (
     <div className="px-4 pt-1 pb-1">
       <div className="flex items-center gap-2 mb-1 text-[10px]">
-        <span className="font-semibold" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"} im Verlauf</span>
+        <span className="font-semibold" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"}: Pace × Puls</span>
         {!tg.week && <span style={{ color: dark ? "#64748b" : "#94a3b8" }}>Kein Plan-Ziel für diesen Lauf</span>}
       </div>
-      <div style={{ width: "100%", height: 120 }}><ResponsiveContainer>
-        <LineChart data={rows} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
-          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-          <XAxis dataKey="x" tick={hasHr ? false : axis} height={hasHr ? 4 : undefined} />
-          <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
-          <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
-          {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
-          {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
-          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
-          {/* nach der Linie gerendert: der Chip (eigener Hintergrund) bleibt lesbar, auch wenn die Daten am Ziel entlanglaufen */}
-          {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
-        </LineChart>
-      </ResponsiveContainer></div>
-      {hasHr && (
-        <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
-          <LineChart data={rows} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-            <XAxis dataKey="x" tick={axis} />
-            <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
-            <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
-            {tg.hr && tg.hr.lo && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
-            {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
-            <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
-            {tg.hr && tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
-            {tg.hr && !tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
-          </LineChart>
-        </ResponsiveContainer></div>
-      )}
-      {selRow && (
-        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
-          <b>{selRow.x}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}
-          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt die Runde</span>
+      {decoupling != null && (
+        <div className="mb-1.5 flex items-baseline gap-1.5">
+          <span className="font-num text-xl font-bold" style={{ color: decoupling > 5 ? (dark ? "#fb7185" : "#e11d48") : decoupling < -5 ? (dark ? "#5eead4" : "#0d9488") : (dark ? "#cbd5e1" : "#475569") }}>{decoupling > 0 ? "+" : ""}{decoupling}%</span>
+          <span className="text-[11px] text-slate-500">HF-Drift (2. Hälfte ggü. 1.)</span>
         </div>
       )}
+      <div style={{ width: "100%", height: 190 }}><ResponsiveContainer>
+        <ScatterChart margin={{ top: 20, right: 12, left: -4, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis type="number" dataKey="pace" domain={[pLo, pHi]} tick={{ fontSize: 9, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} name="Pace" />
+          <YAxis type="number" dataKey="hr" domain={[hLo, hHi]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} allowDecimals={false} name="Puls" />
+          <Tooltip cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1", strokeDasharray: "3 3" }} wrapperStyle={{ zIndex: 40 }} position={{ y: 0 }}
+            content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const p = payload[0].payload;
+              return <div style={{ ...tipStyle(dark, 11), padding: "6px 9px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>{`R${p.lap} · ${secToMMSS(p.pace)}/km · ${p.hr} bpm`}</div>;
+            }} />
+          {tg.pace && tg.hr && <ReferenceArea x1={tg.pace - PACE_BAND_SEC} x2={tg.pace + PACE_BAND_SEC} y1={tg.hr.lo} y2={tg.hr.hi} fill="#8b5cf6" fillOpacity={dark ? 0.18 : 0.12} strokeOpacity={0} />}
+          {!tg.pace && tg.hr && tg.hr.lo != null && <ReferenceArea x1={pLo} x2={pHi} y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+          {!tg.pace && tg.hr && tg.hr.lo == null && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, "above")} />}
+          <Scatter data={rows} line={{ stroke: dark ? "#475569" : "#cbd5e1", strokeWidth: 1.5 }} shape={renderDot} isAnimationActive={false} />
+        </ScatterChart>
+      </ResponsiveContainer></div>
+      <div className="mt-1 text-[10px]" style={{ color: dark ? "#64748b" : "#94a3b8" }}>
+        Jede Runde ein Punkt, hell→rose = früh→spät im Lauf{tg.pace && tg.hr ? ` · Fläche = Zielbereich (Pace ±${PACE_BAND_SEC}s, HF ${tg.hrLabel})` : !tg.pace && tg.hr && tg.hr.lo != null ? ` · Fläche = HF-Zielbereich (${tg.hrLabel})` : ""}
+      </div>
     </div>
   );
 }
