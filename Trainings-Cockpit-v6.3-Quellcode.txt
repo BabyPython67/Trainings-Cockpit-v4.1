@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell, ComposedChart, LabelList,
-  ScatterChart, Scatter,
 } from "recharts";
 import Papa from "papaparse";
 import {
@@ -62,14 +61,6 @@ function hslToHex(h, s, l) {
 function safeText(dark, hex) {
   if (!dark || !hex || hex[0] !== "#") return hex;
   try { const [h, s, l] = hexToHsl(hex); return hslToHex(h, Math.min(Math.max(s, 40), 85), Math.max(l, 72)); } catch (_) { return hex; }
-}
-// v6.2: lineare Interpolation zwischen zwei Hex-Farben (t=0 → a, t=1 → b) — für den chronologischen
-// Farbverlauf im Pace-Puls-Streudiagramm (RunDetailChart).
-function lerpColor(a, b, t) {
-  const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
-  const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
-  const c = pa.map((v, i) => Math.round(v + (pb[i] - v) * Math.min(1, Math.max(0, t))));
-  return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 // Getönte Info-Panels: hell = Pastell, dunkel = transluzenter Akzent auf dunklem Grund
 const panel = (dark, accent, lightBg, lightBorder) => (dark
@@ -726,7 +717,6 @@ function decouplingPct(rows) {
   if (!ef1 || !ef2) return null;
   return Math.round(((ef1 - ef2) / ef1) * 1000) / 10;
 }
-
 /* ===================== v6.2: Zeitraum-Filter (pro Chart einzeln wählbar) ===================== */
 // Presets: "u10" = letzte 10 Einheiten, "d14"/"d30"/"d90" = letzte N Tage, "all" = alles.
 const TIME_RANGES = [["u10", "Letzte 10"], ["d14", "Letzte 2 Wochen"], ["d30", "Letzte 30 Tage"], ["d90", "Letzte 90 Tage"], ["all", "Alle"]];
@@ -1444,147 +1434,72 @@ function extractLaps(rows) {
 function MiniBadge({ icon, text, color }) {
   return <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-num" style={{ background: color + "1a", color }}>{icon}{text}</span>;
 }
-/* ==== v6.0: Lauf-Detail-Chart — Pace & Puls je Runde mit den Zielbereichen aus dem Plan ====
-   Zwei gestapelte Ein-Achsen-Charts (bewusst keine Doppel-Y-Achse). Kein schwebender Tooltip:
-   Tippen wählt eine Runde, beide Charts markieren sie, die Werte stehen in einer festen
-   Ablesezeile darunter — auf dem iPhone verdeckt so nichts den Datenpunkt. */
+// Hilfsstate für zwei X-synchrone Charts mit fester Ablesezeile statt schwebendem Tooltip: Tippen
+// wählt einen Punkt, beide Charts markieren ihn, die Werte stehen darunter — auf dem iPhone verdeckt
+// so nichts den Datenpunkt. Wird von TypeProgressCharts ("Fortschritt je Lauftyp") verwendet.
 function usePairReadout(rowCount) {
   const [idx, setIdx] = useState(null);
   const onPick = (st) => { if (st && st.activeTooltipIndex != null) setIdx(st.activeTooltipIndex); };
   const sel = rowCount ? Math.min(idx == null ? rowCount - 1 : idx, rowCount - 1) : null;
   return { sel, onPick };
 }
-// v6.2: Pace-Puls-Streudiagramm statt zwei getrennter Verläufe — zeigt den BEZUG zwischen beiden
-// Werten direkt (nicht nur beide Verläufe nebeneinander): X=Pace, Y=Puls, ein Punkt je Runde,
-// chronologisch verbunden, Farbe hell→rose = früh→spät. Dazu die Entkopplungs-Kennzahl (decouplingPct).
-function RunDetailChart({ run, illnessLog, planEndMode }) {
-  const dark = useDark();
-  const eff = runEffort(run);
-  const workSet = run.type === "int" && eff && eff.work ? eff.work : null; // Intervalle: nur Arbeitsrunden
-  const rows = (run.laps || [])
-    .filter((l) => (workSet ? workSet.has(l.lap) : true))
-    .map((l, i) => ({ idx: i, lap: l.lap, pace: Math.round(l.pace), hr: l.hr }));
-  if (rows.length < 2) return null;
-  const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
-  const hasHr = rows.filter((r) => r.hr != null).length >= 2;
-  const decoupling = hasHr ? decouplingPct(rows) : null;
-  const total = rows.length;
-  const dotColor = (i) => lerpColor("#a5b4fc", "#e11d48", total > 1 ? i / (total - 1) : 0);
-
-  if (!hasHr) {
-    // Fallback ohne Pulsdaten: Streudiagramm braucht zwei Achsen — hier bleibt nur die Pace je Runde
-    const paceVals = rows.map((r) => r.pace);
-    let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
-    if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
-    return (
-      <div className="px-4 pt-1 pb-1">
-        <div className="text-[10px] font-semibold mb-1" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"} im Verlauf · keine Pulsdaten je Runde</div>
-        <div style={{ width: "100%", height: 110 }}><ResponsiveContainer>
-          <LineChart data={rows.map((r) => ({ x: `R${r.lap}`, pace: r.pace }))} margin={{ top: 16, right: 8, left: -4, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-            <XAxis dataKey="x" tick={{ fontSize: 9, fill: "#94a3b8" }} />
-            <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
-            <Tooltip formatter={(v) => [secToMMSS(v) + "/km", "Pace"]} {...tipTop(dark)} />
-            {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
-            <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
-            {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
-          </LineChart>
-        </ResponsiveContainer></div>
-      </div>
-    );
-  }
-
-  const paceVals = rows.map((r) => r.pace);
-  let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
-  if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
-  pLo -= 6; pHi += 6;
-  const hrVals = rows.filter((r) => r.hr != null).map((r) => r.hr);
-  let hLo = Math.min(...hrVals), hHi = Math.max(...hrVals);
-  if (tg.hr) { if (tg.hr.lo != null) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
-  hLo = Math.max(0, hLo - 6); hHi += 6;
-
-  const renderDot = (props) => {
-    const { cx, cy, payload } = props;
-    const isStart = payload.idx === 0, isEnd = payload.idx === total - 1;
-    return (
-      <g>
-        <circle cx={cx} cy={cy} r={isStart || isEnd ? 5 : 4} fill={dotColor(payload.idx)} stroke={dark ? "#0b1220" : "#fff"} strokeWidth={1.2} />
-        {isStart && <text x={cx} y={cy - 9} textAnchor="middle" fontSize={9} fontWeight={700} fill={safeText(dark, "#4338ca")}>Start</text>}
-        {isEnd && <text x={cx} y={cy - 9} textAnchor="middle" fontSize={9} fontWeight={700} fill={safeText(dark, "#e11d48")}>Ende</text>}
-      </g>
-    );
-  };
-
-  return (
-    <div className="px-4 pt-1 pb-1">
-      <div className="flex items-center gap-2 mb-1 text-[10px]">
-        <span className="font-semibold" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"}: Pace × Puls</span>
-        {!tg.week && <span style={{ color: dark ? "#64748b" : "#94a3b8" }}>Kein Plan-Ziel für diesen Lauf</span>}
-      </div>
-      {decoupling != null && (
-        <div className="mb-1.5 flex items-baseline gap-1.5">
-          <span className="font-num text-xl font-bold" style={{ color: decoupling > 5 ? (dark ? "#fb7185" : "#e11d48") : decoupling < -5 ? (dark ? "#5eead4" : "#0d9488") : (dark ? "#cbd5e1" : "#475569") }}>{decoupling > 0 ? "+" : ""}{decoupling}%</span>
-          <span className="text-[11px] text-slate-500">HF-Drift (2. Hälfte ggü. 1.)</span>
-        </div>
-      )}
-      <div style={{ width: "100%", height: 190 }}><ResponsiveContainer>
-        <ScatterChart margin={{ top: 20, right: 12, left: -4, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-          <XAxis type="number" dataKey="pace" domain={[pLo, pHi]} tick={{ fontSize: 9, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} name="Pace" />
-          <YAxis type="number" dataKey="hr" domain={[hLo, hHi]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} allowDecimals={false} name="Puls" />
-          <Tooltip cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1", strokeDasharray: "3 3" }} wrapperStyle={{ zIndex: 40 }} position={{ y: 0 }}
-            content={({ active, payload }) => {
-              if (!active || !payload || !payload.length) return null;
-              const p = payload[0].payload;
-              return <div style={{ ...tipStyle(dark, 11), padding: "6px 9px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>{`R${p.lap} · ${secToMMSS(p.pace)}/km · ${p.hr} bpm`}</div>;
-            }} />
-          {tg.pace && tg.hr && <ReferenceArea x1={tg.pace - PACE_BAND_SEC} x2={tg.pace + PACE_BAND_SEC} y1={tg.hr.lo} y2={tg.hr.hi} fill="#8b5cf6" fillOpacity={dark ? 0.18 : 0.12} strokeOpacity={0} />}
-          {!tg.pace && tg.hr && tg.hr.lo != null && <ReferenceArea x1={pLo} x2={pHi} y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
-          {!tg.pace && tg.hr && tg.hr.lo == null && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, "above")} />}
-          <Scatter data={rows} line={{ stroke: dark ? "#475569" : "#cbd5e1", strokeWidth: 1.5 }} shape={renderDot} isAnimationActive={false} />
-        </ScatterChart>
-      </ResponsiveContainer></div>
-      <div className="mt-1 text-[10px]" style={{ color: dark ? "#64748b" : "#94a3b8" }}>
-        Jede Runde ein Punkt, hell→rose = früh→spät im Lauf{tg.pace && tg.hr ? ` · Fläche = Zielbereich (Pace ±${PACE_BAND_SEC}s, HF ${tg.hrLabel})` : !tg.pace && tg.hr && tg.hr.lo != null ? ` · Fläche = HF-Zielbereich (${tg.hrLabel})` : ""}
-      </div>
-    </div>
-  );
-}
-// Splits v4: Runden-Liste statt Balkendiagramm. Jede Runde eine Zeile mit exakter Pace,
-// Abweichungsbalken relativ zum Ø Arbeit (links = schneller, rechts = langsamer) und HF.
-// Kein Achsen-/Kontrast-/Clipping-Risiko, exakte Werte direkt lesbar, 380px-tauglich.
-function SplitsChart({ laps, run, illnessLog }) {
+// Splits v6.3: Runden-Liste, alle Runden gleichzeitig sichtbar und direkt vergleichbar (keine
+// Interaktion nötig). Bei Intervalle/Tempo sitzt der Balken-Nullpunkt auf dem PLAN-Ziel (nicht mehr
+// dem eigenen Schnitt) und der Zielbereich (±PACE_BAND_SEC) ist als schattierte Zone auf derselben
+// Spur eingezeichnet — die Balkenspitze liegt sichtbar innerhalb oder außerhalb davon. Der Puls
+// bekommt eine farbige Markierung (grün = im Plan-HF-Bereich, rose = außerhalb), sofern ein
+// Plan-Ziel existiert; ohne Ziel (z. B. außerhalb des Plans) bleibt die neutrale Zahl. Easy/Lang/Test
+// haben kein Pace-Ziel (unverändert), nur den HF-Bereich. Kein Achsen-/Kontrast-/Clipping-Risiko.
+function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const dark = useDark();
   const eff = run.type === "int" || run.type === "tempo" ? runEffort(run) : null;
   const workSet = eff && eff.work ? eff.work : null;
   const refPace = eff ? eff.pace : run.pace;
-  const w = planWeekOf(new Date(run.date + "T12:00:00"), illnessLog);
-  const target = (run.type === "int" || run.type === "tempo") && w >= 1 && w <= TOTAL_WEEKS ? Math.round(targetPaceSec(run.type, effectiveWeek(w, illnessLog))) : null;
+  const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
+  const target = tg.pace; // nur int/tempo, sonst null (planRunTargets löst Plan-Woche/-Typ selbst auf)
+  const zeroRef = target || refPace; // Balken-Nullpunkt: Plan-Ziel wenn vorhanden, sonst eigener Schnitt
   const rows = laps.map((l) => {
     const isWork = workSet ? workSet.has(l.lap) : true; // ohne eff (Easy/Lang): alles regulär
-    return { lap: l.lap, pace: l.pace, hr: l.hr, dist: l.dist, isWork, dev: isWork ? l.pace - refPace : null };
+    return { lap: l.lap, pace: l.pace, hr: l.hr, dist: l.dist, isWork, dev: isWork ? l.pace - zeroRef : null };
   });
-  // Skala: größte Abweichung der Arbeitsrunden, mind. ±10 s — kleine Streuung wird NICHT künstlich
-  // aufgeblasen: ein konstanter Lauf soll auch konstant aussehen.
-  const maxDev = Math.max(10, ...rows.filter((r) => r.dev != null).map((r) => Math.abs(r.dev)));
+  // Skala: größte Abweichung, mind. ±10 s (bzw. mind. der Zielbereich selbst, damit er nie über die
+  // Spur hinausragt) — kleine Streuung wird NICHT künstlich aufgeblasen: ein konstanter Lauf soll
+  // auch konstant aussehen.
+  const maxDev = Math.max(target ? PACE_BAND_SEC : 10, ...rows.filter((r) => r.dev != null).map((r) => Math.abs(r.dev)));
+  const bandPct = target ? Math.min(PACE_BAND_SEC / maxDev, 1) * 50 : 0;
   const label = eff ? (run.type === "int" ? `${eff.reps}× Arbeit` : "Tempo-Block") + ` Ø ${secToMMSS(Math.round(eff.pace))}/km` : `Ø ${secToMMSS(Math.round(refPace))}/km`;
   const muted = dark ? "#64748b" : "#94a3b8", strong = dark ? "#e2e8f0" : "#0f172a";
+  const workRows = rows.filter((r) => r.isWork && r.hr != null);
+  const decoupling = decouplingPct(workRows);
+  // Puls-Status je Runde: nur Arbeitsrunden gegen das Ziel bewerten (Pausen/Erholung dürfen niedriger sein)
+  const hrStatus = (r) => {
+    if (r.hr == null || !r.isWork || !tg.hr) return "neutral";
+    if (tg.hr.lo != null) return r.hr >= tg.hr.lo && r.hr <= tg.hr.hi ? "in" : "out";
+    return r.hr <= tg.hr.hi ? "in" : "out";
+  };
   return (
     <div className="px-4 pb-3 -mt-1">
-      <div className="flex items-center gap-2 mb-1.5 text-[10px]">
+      <div className="flex items-center gap-2 mb-1 text-[10px] flex-wrap">
         <span className="font-semibold" style={{ color: safeText(dark, "#0d9488") }}>{label}</span>
-        {target && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#8b5cf6", "#f3e8ff"), color: safeText(dark, "#7c3aed") }}>Ziel {secToMMSS(target)}</span>}
-        <span style={{ color: muted }}>◄ schneller · langsamer ►</span>
+        {target && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#8b5cf6", "#f3e8ff"), color: safeText(dark, "#7c3aed") }}>Ziel {secToMMSS(target)} ±{PACE_BAND_SEC}s</span>}
+        {tg.hr && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#0d9488", "#ccfbf1"), color: safeText(dark, "#0d9488") }}>HF-Ziel {tg.hrLabel}</span>}
+        {decoupling != null && <span className="font-bold" style={{ color: decoupling > 5 ? safeText(dark, "#e11d48") : decoupling < -5 ? safeText(dark, "#0d9488") : muted }}>{decoupling > 0 ? "+" : ""}{decoupling}% Drift</span>}
+      </div>
+      <div className="flex items-center gap-3 mb-1.5 text-[10px]" style={{ color: muted }}>
+        <span>◄ schneller · langsamer ►</span>
+        {target && <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-3 rounded-sm" style={{ background: softBg(dark, "#8b5cf6", "#ede9fe") }} /> Zielbereich</span>}
       </div>
       <div className="space-y-1">
         {rows.map((r) => {
           const devW = r.dev != null ? Math.min(Math.abs(r.dev) / maxDev, 1) * 50 : 0;
           const faster = r.dev != null && r.dev < 0;
+          const status = hrStatus(r);
           return (
             <div key={r.lap} className="flex items-center gap-2" style={{ opacity: r.isWork ? 1 : 0.55 }}>
               <span className="w-6 shrink-0 text-[10px] font-num" style={{ color: muted }}>R{r.lap}</span>
               <span className="w-11 shrink-0 text-xs font-num font-semibold" style={{ color: r.isWork ? strong : muted }}>{secToMMSS(Math.round(r.pace))}</span>
               <div className="relative flex-1 h-3.5 rounded" style={{ background: dark ? "#1c2940" : "#f1f5f9" }}>
+                {target && <div className="absolute inset-y-0 rounded-sm" style={{ left: `${50 - bandPct}%`, width: `${bandPct * 2}%`, background: softBg(dark, "#8b5cf6", "#ede9fe") }} />}
                 <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: dark ? "#3b4a63" : "#cbd5e1" }} />
                 {r.dev != null ? (
                   <div className="absolute inset-y-0.5 rounded-sm" style={faster
@@ -1594,7 +1509,11 @@ function SplitsChart({ laps, run, illnessLog }) {
                   <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>Pause · {r.dist} km</span>
                 )}
               </div>
-              <span className="w-9 shrink-0 text-right text-[10px] font-num" style={{ color: r.hr ? safeText(dark, "#e11d48") : muted }}>{r.hr ? `${r.hr} ♥` : "–"}</span>
+              {status === "neutral" ? (
+                <span className="w-11 shrink-0 text-right text-[10px] font-num" style={{ color: r.hr ? safeText(dark, "#e11d48") : muted }}>{r.hr ? `${r.hr} ♥` : "–"}</span>
+              ) : (
+                <span className="w-11 shrink-0 text-right text-[10px] font-num font-semibold rounded px-1 py-0.5" style={{ background: softBg(dark, status === "in" ? "#0d9488" : "#e11d48", status === "in" ? "#ccfbf1" : "#ffe4e6"), color: safeText(dark, status === "in" ? "#0d9488" : "#e11d48") }}>{r.hr} ♥</span>
+              )}
             </div>
           );
         })}
@@ -1646,7 +1565,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
               <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
                 <LineChart data={economyF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                   <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
                   <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
                   <Tooltip {...tipTop(dark)} />
@@ -1671,7 +1590,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
             <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
               <LineChart data={efF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                 <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
                 <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipTop(dark)} />
                 <Line type="linear" dataKey="ef" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
@@ -1692,7 +1611,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
             <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
               <LineChart data={vo2F} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                 <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} tickFormatter={(v) => Math.round(v)} />
                 <Tooltip formatter={(v, name) => [v, name === "trend" ? "Trend" : "Einzelwert"]} {...tipTop(dark)} />
                 <Line type="linear" dataKey="est" stroke="none" dot={{ r: 2.5, fill: dark ? "#818cf8" : "#a5b4fc" }} isAnimationActive={false} />
@@ -1728,7 +1647,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
       <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
         <LineChart data={series} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-          <XAxis dataKey="date" tick={hasHr ? false : { fontSize: 9, fill: "#94a3b8" }} height={hasHr ? 4 : undefined} />
+          <XAxis dataKey="date" tick={hasHr ? false : { fontSize: 9, fill: "#94a3b8" }} height={hasHr ? 4 : undefined} interval="preserveStartEnd" />
           <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
           <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
           {target && <ReferenceArea y1={target - PACE_BAND_SEC} y2={target + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
@@ -1744,7 +1663,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
           <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
             <LineChart data={series} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
               <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
               {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
@@ -1951,7 +1870,7 @@ function RunProgress({ data, setData, currentWeek }) {
                 {(predView === "best" ? predTrend : predRaw).length >= 2 ? (
                   <div style={{ width: "100%", height: 100 }}><ResponsiveContainer>
                     <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
-                      <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                       <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
                       <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
                       <Line type={predView === "best" ? "stepAfter" : "linear"} dataKey="pred" stroke="#fff" strokeWidth={2.5} dot={predView === "best" ? (p) => (p.payload.isRecord ? <circle key={p.payload.date} cx={p.cx} cy={p.cy} r={2.5} fill="#fff" /> : null) : { r: 2.5, fill: "#fff" }} />
@@ -2091,10 +2010,7 @@ function RunProgress({ data, setData, currentWeek }) {
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
             )}
-            {hasLaps && isOpen && <>
-              <RunDetailChart run={r} illnessLog={data.illnessLog} planEndMode={data.planEndMode} />
-              <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />
-            </>}
+            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} planEndMode={data.planEndMode} />}
           </div>
         );
       })}</Card>}
@@ -2169,7 +2085,7 @@ function StrengthProgress({ data, setData }) {
           <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
             <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
               <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipTop(dark)} />
               <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
@@ -2466,7 +2382,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
           <div className="mt-2" style={{ width: "100%", height: 170 }}><ResponsiveContainer>
             <LineChart data={sleepSeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
               <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipTop(dark)} />
               <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, chipSide(sleepSeries.map((p) => p.sleep), 8, 10, "below"))} />
@@ -2773,7 +2689,7 @@ function NutritionTab({ data, setData, plan }) {
         <div style={{ width: "100%", height: 150 }} className="mt-1"><ResponsiveContainer>
           <ComposedChart data={days14} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
-            <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval={1} />
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} />
             <Tooltip formatter={(v, name) => [v + " kcal", name === "in" ? "Gegessen" : "Tagesziel"]} {...tipTop(dark)} />
             <Bar dataKey="in" fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={16} />
@@ -2805,7 +2721,7 @@ function NutritionTab({ data, setData, plan }) {
           <div style={{ width: "100%", height: 140 }} className="mt-2"><ResponsiveContainer>
             <LineChart data={wChart} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
               <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipTop(dark)} />
               {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, chipSide(wChart.map((p) => p.kg), parseNum(nut.profile.goalWeight), Math.max(...wChart.map((p) => p.kg)) - Math.min(...wChart.map((p) => p.kg)) + 2, "below"))} />}
@@ -3545,7 +3461,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.2` : "Fortschritt wird automatisch gespeichert · v6.2"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.3` : "Fortschritt wird automatisch gespeichert · v6.3"}</span>
           </footer>
         </main>
       </div>
