@@ -1,0 +1,11 @@
+{
+  "name": "trainings-cockpit-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build/Test/Verify-Tooling für Trainings-Cockpit — siehe workflows/ship-version.md im Repo-Root für den Ablauf.",
+  "type": "module",
+  "dependencies": {
+    "esbuild": "^0.24.0",
+    "playwright-core": "^1.61.1"
+  }
+}

@@ -1,4 +1,4 @@
-# Trainings-Cockpit v6.3
+# Trainings-Cockpit v6.4
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -31,8 +31,14 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
 - v6.3 – Feedback aus dem zweiten Testlauf:
   - **Einzellauf-Chart erneut überarbeitet**: das Streudiagramm aus v6.2 erfüllte seinen Zweck nicht (alle Runden sollten gleichzeitig sichtbar und direkt vergleichbar sein, der Zielbereich pro Runde sofort als „innerhalb/außerhalb" erkennbar). Zurück zur bewährten Runden-Liste, jetzt erweitert: die Pace-Balken-Spur zeigt bei Intervalle/Tempo den Zielbereich als schattierte Zone um die Zielmarke (Balkenspitze sichtbar drin oder draußen), der Puls-Wert bekommt eine farbige Markierung (grün = im Plan-Bereich, rose = außerhalb). Die Entkopplungs-Kennzahl bleibt als Kopfzeile erhalten.
   - **Achsenbeschriftung bei langem Zeitraum repariert**: bei „Alle"/„90 Tage" (seit v6.2 möglich) überlappten sich die Datums-Beschriftungen auf mehreren Charts, u. a. hatte der Kalorien-Verlauf ein hartcodiertes Intervall, das nur zur alten festen 14-Tage-Ansicht passte. Alle Zeitreihen-Charts nutzen jetzt Recharts' eingebauten „preserveStartEnd"-Modus statt eines festen Intervalls — verdichtet die Beschriftungen automatisch je nach Datenmenge, ohne dass (wie bei einem selbstgebauten festen Intervall) die letzte Beschriftung am Rand abgeschnitten wird.
+- v6.4 – Feedback aus dem dritten Testlauf, Lauf-Detail:
+  - **Puls-Verlaufschart zusätzlich zur Rundenliste**: die Pace-Rundenliste bleibt (Stärke: alle Runden gleichzeitig vergleichbar), bekommt aber ein eigenes Puls-Verlaufschart darunter statt einer Puls-Zahl pro Zeile — Pace-Vergleich und Puls-Verlauf sind unterschiedliche Fragen und bekommen jetzt je eine passende Darstellung, statt in einer Zeile zusammengequetscht zu sein.
+  - **Intervall-HF-Bewertung ehrlicher**: der Rundendurchschnitt wird bei Intervallen durch die Anlaufzeit nach jeder Pause (Cardiac Lag) gedrückt — eine ganze Session konnte dadurch fälschlich komplett als „außerhalb des Ziels" markiert werden, obwohl der Puls pro Runde tatsächlich ins Zielband hineinlief. Genutzt wird jetzt der Rundenpeak (aus einer bisher ungenutzten Spalte im Garmin-CSV-Rundenexport) minus einer kleinen Toleranz statt des Durchschnitts; die erste Arbeitsrunde bleibt immer neutral bewertet.
+  - **Aufgeklappte Runde entrümpelt**: die generische Kollaps-Übersichtszeile (Ø bpm/spm/Höhenmeter/kcal) wird ausgeblendet, sobald die Runden-Details offen sind — die stapelten sich sonst mit der präziseren Kopfzeile der Rundenliste.
+  - **Neue Build-/Test-Infrastruktur**: `tools/` (Build-, Test- und Browser-Verifikationsscripts) und `workflows/ship-version.md` (Ablauf-SOP inkl. bekannter Fallstricke) liegen jetzt im Repo statt nur in einer einzelnen Session — künftige Versionen bauen auf denselben, bereits erprobten Tools auf.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v6.3-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v6.4-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
