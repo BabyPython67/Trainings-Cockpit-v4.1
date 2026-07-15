@@ -178,6 +178,22 @@ function parseHrTarget(hr) {
   const b = String(hr).match(/bis\s*(\d{2,3})/i);
   return b ? { lo: null, hi: +b[1] } : null;
 }
+// v6.4: Toleranz auf den Rundenpeak — ein roher Maximalwert kann ein kurzer, nicht gehaltener Ausreißer
+// sein (Nutzer-Einwand, mit Garmin-Sekundenchart belegt); die Marge bewertet "nahe am/im Zielbereich
+// gehalten", nicht "einmal kurz gestreift".
+const HR_PEAK_MARGIN_BPM = 5;
+// Bewertet eine Arbeitsrunde gegen den Plan-HF-Zielbereich. Der Rundendurchschnitt wird bei Intervallen
+// durch die Anlaufzeit nach der Pause (Cardiac Lag) verwässert — der Rundenpeak (minus Toleranz) bildet
+// die tatsächlich erreichte Anstrengung ehrlicher ab. Ohne Peak-Daten (ältere CSV-Exporte, manuell
+// erfasste Läufe) fällt die Bewertung auf den Durchschnitt zurück. Die erste Arbeitsrunde eines Laufs
+// bleibt immer neutral: auch ihr Peak kann noch durch den Anlauf aus der Ruhe gedrückt sein.
+function hrPeakStatus(hr, hrMax, isFirstWork, tgHr) {
+  if (isFirstWork || !tgHr) return "neutral";
+  const eff = hrMax != null ? hrMax - HR_PEAK_MARGIN_BPM : hr;
+  if (eff == null) return "neutral";
+  if (tgHr.lo != null) return eff >= tgHr.lo && eff <= tgHr.hi ? "in" : "out";
+  return eff <= tgHr.hi ? "in" : "out";
+}
 
 const STRENGTH = {
   upper: { title: "Oberkörper & Rumpf", sub: "Schulterschutz + Stabilität · Beine bleiben frisch", load: 3, ex: ["Schulter-Außenrotation (Band) – 2×15", "Bankdrücken / Schrägbank – 3×6–8", "Rudern (Kabel/LH) – 3×8–10", "Schulterdrücken (KH) – 3×8", "Pallof Press (Anti-Rotation) – 3×10/Seite", "Plank-Varianten – 3×30–45 s"] },
@@ -1426,8 +1442,13 @@ function extractLaps(rows) {
     const dist = numOrNull(pickCol(row, ["distanz", "distance"]));
     const sec = parseTimeToSec(pickCol(row, ["zeit", "time"]));
     const hr = numOrNull(pickCol(row, ["ø herzfrequenz", "avg heart"]));
+    // v6.4: Garmin-Rundenexport hat auch eine Maximale-Herzfrequenz-Spalte PRO Runde (dieselbe Spalte,
+    // die extractExtras() bereits für die Gesamt-Zusammenfassung kennt) — bislang ungenutzt. Der
+    // Rundendurchschnitt wird bei Intervallen durch die Anlaufzeit nach der Pause verwässert, der Peak
+    // bildet die tatsächlich erreichte Anstrengung der Runde besser ab (siehe hrPeakStatus).
+    const hrMax = numOrNull(pickCol(row, ["maximale herzfrequenz", "max heart", "max hf"]));
     if (!dist || !sec) return;
-    laps.push({ lap: Number(runde), dist: Math.round(dist * 100) / 100, sec, pace: sec / dist, hr: hr != null ? Math.round(hr) : null });
+    laps.push({ lap: Number(runde), dist: Math.round(dist * 100) / 100, sec, pace: sec / dist, hr: hr != null ? Math.round(hr) : null, hrMax: hrMax != null ? Math.round(hrMax) : null });
   });
   return laps.sort((a, b) => a.lap - b.lap);
 }
@@ -1443,13 +1464,13 @@ function usePairReadout(rowCount) {
   const sel = rowCount ? Math.min(idx == null ? rowCount - 1 : idx, rowCount - 1) : null;
   return { sel, onPick };
 }
-// Splits v6.3: Runden-Liste, alle Runden gleichzeitig sichtbar und direkt vergleichbar (keine
-// Interaktion nötig). Bei Intervalle/Tempo sitzt der Balken-Nullpunkt auf dem PLAN-Ziel (nicht mehr
-// dem eigenen Schnitt) und der Zielbereich (±PACE_BAND_SEC) ist als schattierte Zone auf derselben
-// Spur eingezeichnet — die Balkenspitze liegt sichtbar innerhalb oder außerhalb davon. Der Puls
-// bekommt eine farbige Markierung (grün = im Plan-HF-Bereich, rose = außerhalb), sofern ein
-// Plan-Ziel existiert; ohne Ziel (z. B. außerhalb des Plans) bleibt die neutrale Zahl. Easy/Lang/Test
-// haben kein Pace-Ziel (unverändert), nur den HF-Bereich. Kein Achsen-/Kontrast-/Clipping-Risiko.
+// Splits v6.4: Pace-Rundenliste (alle Runden gleichzeitig sichtbar und direkt vergleichbar, keine
+// Interaktion nötig) getrennt von einem eigenen Puls-Verlaufschart darunter — zwei unterschiedliche
+// Fragen (Pace-Vergleich zwischen Runden vs. Puls-Verlauf über die Zeit) bekommen je eine passende
+// Darstellung statt in einer Zeile zusammengequetscht zu werden (Feedback: "voll/unübersichtlich").
+// Bei Intervalle/Tempo sitzt der Pace-Balken-Nullpunkt auf dem PLAN-Ziel (nicht dem eigenen Schnitt)
+// und der Zielbereich (±PACE_BAND_SEC) ist als schattierte Zone auf derselben Spur eingezeichnet.
+// Easy/Lang/Test haben kein Pace-Ziel (unverändert), nur den HF-Bereich im Puls-Chart.
 function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const dark = useDark();
   const eff = run.type === "int" || run.type === "tempo" ? runEffort(run) : null;
@@ -1458,9 +1479,12 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
   const target = tg.pace; // nur int/tempo, sonst null (planRunTargets löst Plan-Woche/-Typ selbst auf)
   const zeroRef = target || refPace; // Balken-Nullpunkt: Plan-Ziel wenn vorhanden, sonst eigener Schnitt
+  let firstWorkSeen = false;
   const rows = laps.map((l) => {
     const isWork = workSet ? workSet.has(l.lap) : true; // ohne eff (Easy/Lang): alles regulär
-    return { lap: l.lap, pace: l.pace, hr: l.hr, dist: l.dist, isWork, dev: isWork ? l.pace - zeroRef : null };
+    const isFirstWork = isWork && !firstWorkSeen; // erste Arbeitsrunde: HF noch durch Anlauf gedrückt
+    if (isWork) firstWorkSeen = true;
+    return { lap: l.lap, pace: l.pace, hr: l.hr, hrMax: l.hrMax, dist: l.dist, isWork, isFirstWork, dev: isWork ? l.pace - zeroRef : null };
   });
   // Skala: größte Abweichung, mind. ±10 s (bzw. mind. der Zielbereich selbst, damit er nie über die
   // Spur hinausragt) — kleine Streuung wird NICHT künstlich aufgeblasen: ein konstanter Lauf soll
@@ -1471,12 +1495,6 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const muted = dark ? "#64748b" : "#94a3b8", strong = dark ? "#e2e8f0" : "#0f172a";
   const workRows = rows.filter((r) => r.isWork && r.hr != null);
   const decoupling = decouplingPct(workRows);
-  // Puls-Status je Runde: nur Arbeitsrunden gegen das Ziel bewerten (Pausen/Erholung dürfen niedriger sein)
-  const hrStatus = (r) => {
-    if (r.hr == null || !r.isWork || !tg.hr) return "neutral";
-    if (tg.hr.lo != null) return r.hr >= tg.hr.lo && r.hr <= tg.hr.hi ? "in" : "out";
-    return r.hr <= tg.hr.hi ? "in" : "out";
-  };
   return (
     <div className="px-4 pb-3 -mt-1">
       <div className="flex items-center gap-2 mb-1 text-[10px] flex-wrap">
@@ -1493,7 +1511,6 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
         {rows.map((r) => {
           const devW = r.dev != null ? Math.min(Math.abs(r.dev) / maxDev, 1) * 50 : 0;
           const faster = r.dev != null && r.dev < 0;
-          const status = hrStatus(r);
           return (
             <div key={r.lap} className="flex items-center gap-2" style={{ opacity: r.isWork ? 1 : 0.55 }}>
               <span className="w-6 shrink-0 text-[10px] font-num" style={{ color: muted }}>R{r.lap}</span>
@@ -1509,16 +1526,49 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
                   <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>Pause · {r.dist} km</span>
                 )}
               </div>
-              {status === "neutral" ? (
-                <span className="w-11 shrink-0 text-right text-[10px] font-num" style={{ color: r.hr ? safeText(dark, "#e11d48") : muted }}>{r.hr ? `${r.hr} ♥` : "–"}</span>
-              ) : (
-                <span className="w-11 shrink-0 text-right text-[10px] font-num font-semibold rounded px-1 py-0.5" style={{ background: softBg(dark, status === "in" ? "#0d9488" : "#e11d48", status === "in" ? "#ccfbf1" : "#ffe4e6"), color: safeText(dark, status === "in" ? "#0d9488" : "#e11d48") }}>{r.hr} ♥</span>
-              )}
             </div>
           );
         })}
       </div>
+      <PulseTrendChart rows={rows} tg={tg} dark={dark} />
     </div>
+  );
+}
+// v6.4: Puls-Verlauf über alle Runden (Arbeit + Pause, chronologisch verbunden statt isolierter
+// Zahl/Badge pro Zeile) — macht das "steigt nach Start, hält sich dann"-Muster fürs Auge sichtbar,
+// auch ohne Sekundenauflösung (jeder Punkt bleibt ein Rundendurchschnitt). Punktfarbe nach
+// hrPeakStatus: Rundenpeak (minus Toleranz) gegen den Plan-Zielbereich, erste Arbeitsrunde immer
+// neutral (Cardiac Lag nach der Ruhephase davor) — siehe hrPeakStatus-Kommentar für die Begründung.
+function PulseTrendChart({ rows, tg, dark }) {
+  const data = rows.filter((r) => r.hr != null).map((r) => ({ ...r, label: `R${r.lap}` }));
+  if (data.length < 2) return null;
+  const muted = dark ? "#64748b" : "#94a3b8";
+  const hrVals = data.map((r) => r.hr);
+  let hLo = Math.min(...hrVals), hHi = Math.max(...hrVals);
+  if (tg.hr) { if (tg.hr.lo != null) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
+  return (
+    <>
+      <div className="text-[10px] font-semibold mt-3 mb-1" style={{ color: safeText(dark, "#e11d48") }}>Puls-Verlauf je Runde</div>
+      <div style={{ width: "100%", height: 130 }}><ResponsiveContainer>
+        <LineChart data={data} margin={{ top: 14, right: 8, left: -4, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
+          <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} allowDecimals={false} />
+          <Tooltip formatter={(v, n, p) => [`${v} bpm${p.payload.isWork ? "" : " · Pause"}`, "Puls"]} {...tipTop(dark)} />
+          {tg.hr && tg.hr.lo != null && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+          <Line type="monotone" dataKey="hr" stroke={dark ? "#94a3b8" : "#64748b"} strokeWidth={2}
+            dot={(dprops) => {
+              const { cx, cy, payload, index } = dprops;
+              if (cx == null || cy == null) return null;
+              const status = payload.isWork ? hrPeakStatus(payload.hr, payload.hrMax, payload.isFirstWork, tg.hr) : "neutral";
+              const fill = !payload.isWork ? (dark ? "#334155" : "#e2e8f0") : status === "in" ? "#0d9488" : status === "out" ? "#e11d48" : muted;
+              return <circle key={`hrdot-${index}`} cx={cx} cy={cy} r={payload.isWork ? 4 : 2.5} fill={fill} stroke={dark ? "#0b1220" : "#ffffff"} strokeWidth={1.5} />;
+            }} isAnimationActive={false} />
+          {tg.hr && tg.hr.lo != null && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+          {tg.hr && tg.hr.lo == null && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+        </LineChart>
+      </ResponsiveContainer></div>
+    </>
   );
 }
 
@@ -2002,7 +2052,10 @@ function RunProgress({ data, setData, currentWeek }) {
               {hasLaps && <button onClick={() => setOpenRun(isOpen ? null : r.id)} className="text-slate-400 p-1 shrink-0"><ChevronDown size={14} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
               <button onClick={() => remove(r.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
             </div>
-            {hasBadges && (
+            {/* v6.4: bei aufgeklappter Runde liefert SplitsChart bereits präzisere Kennzahlen zum selben
+               Lauf (Arbeits-Pace/Ziel-Chips/Drift) — die generische Übersichts-Zeile hier würde nur
+               gestapelte, redundante Kopf-Chips erzeugen (Feedback: "voll/unübersichtlich"). */}
+            {hasBadges && !isOpen && (
               <div className="flex flex-wrap gap-1.5 px-4 pb-2 -mt-1">
                 {r.hrAvg && <MiniBadge icon={<HeartPulse size={10} />} text={`Ø ${r.hrAvg} bpm`} color="#e11d48" />}
                 {r.cadence && <MiniBadge text={`${r.cadence} spm`} color="#0d9488" />}
@@ -3461,7 +3514,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.3` : "Fortschritt wird automatisch gespeichert · v6.3"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.4` : "Fortschritt wird automatisch gespeichert · v6.4"}</span>
           </footer>
         </main>
       </div>
