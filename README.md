@@ -1,4 +1,4 @@
-# Trainings-Cockpit v6.2
+# Trainings-Cockpit v6.3
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -28,8 +28,11 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Zeitraum-Filter** (Letzte 10 Einheiten / 2 Wochen / 30 Tage / 90 Tage / Alle) an praktisch jedem Verlaufs-Chart, jeweils einzeln wählbar: 5K-Prognose, Fortschritt je Lauftyp, die drei Smart-Charts, Kraftwerte, Schlaf-Verlauf, Gewicht, Kalorien-Verlauf.
   - **Motivations-Feinschliff**: Wochenrhythmus-Vergleich jetzt als fette Zahl mit Trend-Badge statt kleinem grauem Text; neue „Bestwerte"-Karte bei den Kraftwerten (gab es bei Laufen schon, bei Kraft bisher nicht).
   - **Lauf-Detail neu gedacht**: statt zwei getrennter Pace-/Puls-Verläufe je Runde jetzt ein Pace-Puls-Streudiagramm (chronologisch verbunden, Farbverlauf hell→rose = früh→spät im Lauf) plus eine Entkopplungs-Kennzahl („+X % HF-Drift") — zeigt den Bezug zwischen Pace und Puls direkt, nicht nur beide Werte nebeneinander.
+- v6.3 – Feedback aus dem zweiten Testlauf:
+  - **Einzellauf-Chart erneut überarbeitet**: das Streudiagramm aus v6.2 erfüllte seinen Zweck nicht (alle Runden sollten gleichzeitig sichtbar und direkt vergleichbar sein, der Zielbereich pro Runde sofort als „innerhalb/außerhalb" erkennbar). Zurück zur bewährten Runden-Liste, jetzt erweitert: die Pace-Balken-Spur zeigt bei Intervalle/Tempo den Zielbereich als schattierte Zone um die Zielmarke (Balkenspitze sichtbar drin oder draußen), der Puls-Wert bekommt eine farbige Markierung (grün = im Plan-Bereich, rose = außerhalb). Die Entkopplungs-Kennzahl bleibt als Kopfzeile erhalten.
+  - **Achsenbeschriftung bei langem Zeitraum repariert**: bei „Alle"/„90 Tage" (seit v6.2 möglich) überlappten sich die Datums-Beschriftungen auf mehreren Charts, u. a. hatte der Kalorien-Verlauf ein hartcodiertes Intervall, das nur zur alten festen 14-Tage-Ansicht passte. Alle Zeitreihen-Charts nutzen jetzt Recharts' eingebauten „preserveStartEnd"-Modus statt eines festen Intervalls — verdichtet die Beschriftungen automatisch je nach Datenmenge, ohne dass (wie bei einem selbstgebauten festen Intervall) die letzte Beschriftung am Rand abgeschnitten wird.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v6.2-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v6.3-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
