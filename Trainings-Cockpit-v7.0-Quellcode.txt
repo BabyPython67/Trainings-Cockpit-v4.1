@@ -9,7 +9,7 @@ import {
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
   Trash2, Heart, RotateCcw, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
-  GraduationCap, Thermometer, Pencil, Calendar,
+  GraduationCap, Thermometer, Pencil, Calendar, Award, Star,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -374,13 +374,30 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
     // aus Streak, Wochenlast, Meso-/Wochen-Chart und Kalender-Punkten heraus).
     if (repsByDay[day]) items.push(...repsByDay[day]);
     items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.load = 0; } });
-    // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert), nur Empfehlung/Badge ändern sich
+    // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
+    // v7.0: Aufbau greift wirklich in die Einheit ein statt nur einen Hinweis anzuhängen (Muster: Taper-Shakeout
+    // Zeile oben) — sonst stehen "locker laufen" und die harten Tempo-/HF-Ziele widersprüchlich nebeneinander.
     const addDesc = (it, txt) => { it.desc = it.desc ? `${it.desc} · ${txt}` : txt; };
-    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; addDesc(it, "Krank gemeldet — Pause empfohlen, höchstens sehr locker"); } });
+    if (sickPhase === "sick") items.forEach((it) => {
+      if (it.load <= 0) return;
+      it.illness = "sick";
+      // Turniertag: "Bestleistung anstreben" + "Pause empfohlen" im selben Satz wäre widersprüchlich — Text ersetzen
+      if (it.tournament) it.desc = "Krank gemeldet — Start nur in Absprache mit Trainer/Eltern und wenn du dich fit fühlst; dann mit Vorsicht Bestleistung anstreben";
+      else addDesc(it, "Krank gemeldet — Pause empfohlen, höchstens sehr locker");
+    });
     else if (sickPhase === "ramp") items.forEach((it) => {
-      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: locker statt hart laufen"); }
-      else if (it.sport === "strength") { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: nur Mobility, nichts Schweres"); }
+      if (it.cancelled) return; // Ausgefallene bleiben ausgefallen — keine Wiederbelebung über den Umbau
+      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) {
+        // Harte Läufe werden zur Easy-Einheit der laufenden Woche (uid & Häkchen bleiben; Easy hat kein Pace-Ziel)
+        const easy = runs.Mo && runs.Mo.type === "easy" ? runs.Mo : { dur: "30 Min", hr: "130–140" };
+        it.illness = "ramp"; it.type = "easy"; it.label = "Easy (Aufbau)"; it.dur = easy.dur; it.hr = easy.hr;
+        it.load = RUN_TYPE.easy.load; it.desc = "Aufbau nach Krankheit: locker statt hart — Intervalle/Tempo entfallen";
+      } else if (it.sport === "strength" && it.key !== "mobility") {
+        const m = STRENGTH.mobility;
+        it.illness = "ramp"; it.key = "mobility"; it.label = m.title; it.dur = "15–20 Min"; it.ex = m.ex;
+        it.load = m.load; it.desc = "Aufbau nach Krankheit: nur Mobility, nichts Schweres";
+      }
     });
     if (items.length === 0) items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag", dur: "Erholung", desc: day === "So" ? "Aktive Erholung optional: Spaziergang, Dehnen" : "Kein Training geplant", load: 0 });
     return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
@@ -415,6 +432,8 @@ function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = Str
 const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const t = Math.round(sec); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+// v7.0: Gesamt-Trainingszeit lesbar machen — unter 1 h in Minuten, sonst h:mm
+const fmtHours = (sec) => { if (!sec) return "0 Min"; const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")} h` : `${m} Min`; };
 
 /* ===================== Schule: Fristen-Ampel ===================== */
 const SCHOOL_ART = [["hausaufgabe", "Hausaufgabe"], ["klausur", "Klausur"]];
@@ -462,7 +481,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {} };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [] };
 const hasStorage = typeof window !== "undefined" && window.storage;
 function usePersistentData() {
   const [data, setData] = useState(DEFAULT_DATA);
@@ -780,6 +799,128 @@ function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode, over
   if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides)) s++;
   return s;
 }
+
+/* ===================== v7.0: Auszeichnungen (kuratiert) & Gesamtstatistik ===================== */
+// Bewusst KEIN Punkte-/Level-System (Garmin-Vorbild abgelehnt: Zahlen ohne Bezug zur echten Leistung).
+// Jedes Abzeichen ist eine pure Ableitung aus den Logs (Muster: Bestzeiten) — es wird nie ein
+// "erreicht"-Flag gespeichert. Zwei Kategorien:
+//  - lifetime: permanent, mit rückwirkend korrektem Erreichungsdatum aus der Historie (wie eine Bestzeit).
+//  - live: hängt an der AKTUELLEN Wochen-Serie und verschwindet bewusst wieder, wenn sie reißt
+//    (Konsistenz-Anreiz gegen Boom-Bust — ausdrücklicher Nutzer-Wunsch).
+// Wie computeStreak, aber längste JE erreichte Serie (+ Datum des Rekords) statt der aktuellen —
+// Krankheits-Fairness läuft über weekFulfilled automatisch mit.
+function longestStreakInfo(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides) {
+  let best = 0, run = 0, bestWeek = null;
+  for (let w = 1; w <= currentWeek; w++) {
+    if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides)) { run++; if (run > best) { best = run; bestWeek = w; } }
+    else run = 0;
+  }
+  return { best, date: bestWeek ? toLocalISO(new Date(mondayOfWeek(bestWeek).getTime() + 6 * DAY_MS)) : null };
+}
+// Abgehakte Plan-Einheiten einer Sportart, als sortierte Plan-Datumsliste. done speichert keine
+// Abhak-Zeitpunkte — das Plan-Datum der Einheit (aus Woche+Tag der uid-Struktur) ist die ehrliche,
+// deterministische Näherung fürs rückwirkende Abzeichen-Datum.
+function planDoneDatesBySport(sport, done, vbSlots, illnessLog, planEndMode, overrides) {
+  const totalW = planTotalWeeks(illnessLog, planEndMode);
+  const dates = [];
+  for (let w = 1; w <= totalW; w++) {
+    buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode, overrides).forEach((d) => d.items.forEach((it) => {
+      if (it.sport === sport && it.load > 0 && done[it.uid]) dates.push(toLocalISO(new Date(mondayOfWeek(w).getTime() + DAYS.indexOf(d.day) * DAY_MS)));
+    }));
+  }
+  return dates.sort();
+}
+// Datum, an dem die kumulierte Lauf-Distanz eine Schwelle erstmals überschritten hat
+function cumulativeRunKmDate(runLog, thresholdKm) {
+  let sum = 0;
+  for (const r of [...runLog].sort((a, b) => a.date.localeCompare(b.date))) {
+    sum += r.dist || 0;
+    if (sum >= thresholdKm) return r.date;
+  }
+  return null;
+}
+// Stufen bewusst weit in die Zukunft gestaffelt (Nutzer-Wunsch: "gute Vorsorge") — ausgegraute
+// Fernziele schaden nicht, verschwundene Nahziele schon.
+const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#059669" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
+const BADGE_CATALOG = [
+  ...[25, 50, 100, 150, 200, 300, 500, 750, 1000].map((km) => ({
+    id: `run_${km}km`, group: "run", tier: "lifetime", title: `${km} km gesamt`, icon: "Mountain", target: km, unit: "km",
+    current: (c) => c.totalRunKm, check: (c) => c.totalRunKm >= km, earnedDate: (c) => cumulativeRunKmDate(c.data.runLog, km),
+  })),
+  ...[10, 25, 50, 75, 100, 150, 200].map((n) => ({
+    id: `strength_${n}`, group: "strength", tier: "lifetime", title: `${n} Krafteinheiten`, icon: "Dumbbell", target: n, unit: "Einheiten",
+    current: (c) => c.strengthDays.length, check: (c) => c.strengthDays.length >= n, earnedDate: (c) => c.strengthDays[n - 1] || null,
+  })),
+  ...[20, 40, 60, 80, 100, 150, 200].map((n) => ({
+    id: `vb_${n}`, group: "vb", tier: "lifetime", title: `${n} Volleyball-Einheiten`, icon: "vb", target: n, unit: "Einheiten",
+    current: (c) => c.vbDates.length, check: (c) => c.vbDates.length >= n, earnedDate: (c) => c.vbDates[n - 1] || null,
+  })),
+  { id: "streak_record", group: "streak", tier: "lifetime", title: "Längste Wochen-Serie", icon: "Award", target: null, unit: "Wo.",
+    current: (c) => c.longStreak.best, check: (c) => c.longStreak.best >= 2, earnedDate: (c) => c.longStreak.date },
+  { id: "plan_complete", group: "milestone", tier: "lifetime", title: "16-Wochen-Laufplan komplett", icon: "Star", target: null, unit: null,
+    current: (c) => c.runDone, check: (c) => c.runTotal > 0 && c.runDone >= c.runTotal, earnedDate: (c) => c.runPlanDates[c.runPlanDates.length - 1] || null },
+  ...[4, 8, 12, 16].map((n) => ({
+    id: `live_streak_${n}`, group: "streak", tier: "live", title: `${n} Wochen am Stück`, icon: "CalendarDays", target: n, unit: "Wo.",
+    current: (c) => c.liveStreak, check: (c) => c.liveStreak >= n, earnedDate: null,
+  })),
+];
+// Wertet den kompletten Katalog gegen die Logs aus. liveStreak wird durchgereicht (CockpitTab hat den
+// Wert schon), alles andere entsteht hier — die Funktion bleibt damit pur und einzeln testbar.
+function computeEarnedBadges(data, currentWeek, liveStreak) {
+  const totalRunKm = Math.round(data.runLog.reduce((s, r) => s + (r.dist || 0), 0) * 100) / 100;
+  const strengthDays = [...new Set(data.strengthLog.map((s) => s.date))].sort();
+  const vbDates = planDoneDatesBySport("vb", data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
+  const runPlanDates = planDoneDatesBySport("run", data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
+  const longStreak = longestStreakInfo(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
+  const runProgress = runPlanProgress(data.illnessLog, data.planEndMode);
+  const runDone = runProgress.uids.filter((u) => data.done[u]).length;
+  const ctx = { data, totalRunKm, strengthDays, vbDates, runPlanDates, longStreak, liveStreak, runDone, runTotal: runProgress.total };
+  return BADGE_CATALOG.map((b) => {
+    const earned = !!b.check(ctx);
+    return { ...b, earned, earnedDate: earned && b.earnedDate ? b.earnedDate(ctx) : null, current: b.current ? b.current(ctx) : null };
+  });
+}
+// Gesamtstatistik & persönliche Rekorde — Garmin-Vorbild, aber nur aus Werten, die die App wirklich hat.
+// 5-/10-km-Rekord: zeitanteilig aus Läufen ≥ der Distanz (ehrlich gekennzeichnet als "anteilig" —
+// die App hat keine GPS-Sekundendaten für ein echtes schnellstes Teilstück).
+function lifetimeStats(runLog, done) {
+  const totalKm = Math.round(runLog.reduce((s, r) => s + (r.dist || 0), 0) * 10) / 10;
+  const totalSec = runLog.reduce((s, r) => s + (r.sec || 0), 0);
+  const doneCount = Object.values(done || {}).filter(Boolean).length;
+  let longest = null;
+  runLog.forEach((r) => { if ((r.dist || 0) > 0 && (!longest || r.dist > longest.dist)) longest = r; });
+  const share = (distKm) => {
+    let best = null;
+    runLog.forEach((r) => { if ((r.dist || 0) >= distKm && r.sec) { const t = Math.round(r.sec * (distKm / r.dist)); if (!best || t < best.sec) best = { sec: t, r }; } });
+    return best;
+  };
+  const weekKm = {};
+  runLog.forEach((r) => { if (r.dist) { const k = toLocalISO(mondayOf(new Date(r.date + "T12:00:00"))); weekKm[k] = (weekKm[k] || 0) + r.dist; } });
+  let bestWeek = null;
+  Object.entries(weekKm).forEach(([k, km]) => { if (!bestWeek || km > bestWeek.km) bestWeek = { monday: k, km: Math.round(km * 10) / 10 }; });
+  return { totalKm, totalSec, doneCount, runCount: runLog.length, longest, best5k: share(5), best10k: share(10), bestWeek };
+}
+// Monats-Kilometer für den Gesamtstatistik-Balkenchart (lückenlos vom ersten Lauf-Monat bis heute)
+function monthlyRunKm(runLog, todayIso) {
+  if (!runLog.length) return [];
+  const sums = {};
+  runLog.forEach((r) => { if (r.dist) { const k = r.date.slice(0, 7); sums[k] = (sums[k] || 0) + r.dist; } });
+  const keys = Object.keys(sums).sort();
+  if (!keys.length) return [];
+  const out = [];
+  let [y, m] = keys[0].split("-").map(Number);
+  const end = (todayIso || todayISO()).slice(0, 7);
+  const NAMES = ["Jan", "Feb", "März", "Apr", "Mai", "Juni", "Juli", "Aug", "Sept", "Okt", "Nov", "Dez"];
+  while (true) {
+    const k = `${y}-${String(m).padStart(2, "0")}`;
+    out.push({ key: k, label: NAMES[m - 1], km: Math.round((sums[k] || 0) * 10) / 10 });
+    if (k >= end || out.length > 36) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  // Über Jahresgrenzen hinweg: Jahr ans Label, sonst wären zwei "Jan" nicht unterscheidbar
+  if (new Set(out.map((o) => o.key.slice(0, 4))).size > 1) out.forEach((o) => { o.label = `${o.label} ${o.key.slice(2, 4)}`; });
+  return out;
+}
 const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
 function dailyRecommendation(todaySessions, level, latest) {
   const works = (todaySessions || []).filter((i) => i.load > 0);
@@ -937,6 +1078,224 @@ function IllnessNoticeCard({ data }) {
     </Card>
   );
 }
+
+/* ===================== v7.0: Gesamtstatistik & Auszeichnungen (Cockpit-Karten) ===================== */
+function BadgeGlyph({ icon, size = 15, color }) {
+  if (icon === "vb") return <VolleyballIcon size={size} color={color} />;
+  const M = { Mountain, Dumbbell, Award, Star, CalendarDays, Trophy, Flame };
+  const I = M[icon] || Trophy;
+  return <I size={size} color={color} />;
+}
+// Kachel einer Stufen-Leiter: erreicht = satt + Datum, offen = ausgegraut (Titel bleibt lesbar — man
+// soll sehen, worauf man hinarbeitet); die nächste offene Stufe trägt den Fortschrittsbalken.
+function BadgeTile({ badge, isNext, dark }) {
+  const g = BADGE_GROUPS[badge.group];
+  const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
+  return (
+    <div className="rounded-xl p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
+      <div className="h-8 w-8 rounded-full flex items-center justify-center" style={{ background: badge.earned ? g.color : dark ? "#243049" : "#e2e8f0" }}>
+        <BadgeGlyph icon={badge.icon} size={15} color={badge.earned ? "#fff" : dark ? "#64748b" : "#94a3b8"} />
+      </div>
+      <div className="text-[9.5px] font-semibold leading-tight" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{badge.title}</div>
+      {badge.earned && badge.earnedDate && <div className="text-[8.5px] font-num" style={{ color: dark ? "#64748b" : "#94a3b8" }}>{fmtISOshort(badge.earnedDate)}</div>}
+      {!badge.earned && isNext && badge.target != null && (
+        <div className="w-full">
+          <div className="h-1 rounded-full overflow-hidden" style={{ background: dark ? "#243049" : "#e2e8f0" }}><div className="h-full rounded-full" style={{ width: `${pct}%`, background: g.color }} /></div>
+          <div className="text-[8.5px] font-num mt-0.5" style={{ color: dark ? "#64748b" : "#94a3b8" }}>{Math.round(badge.current)}/{badge.target}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+function GesamtstatistikCard({ data, dark }) {
+  const stats = useMemo(() => lifetimeStats(data.runLog, data.done), [data.runLog, data.done]);
+  const months = useMemo(() => monthlyRunKm(data.runLog), [data.runLog]);
+  const recs = [
+    stats.longest && { label: "Längster Lauf", value: `${stats.longest.dist} km`, sub: fmtISOshort(stats.longest.date) },
+    stats.best5k && { label: "5 km (anteilig)", value: secToMMSS(stats.best5k.sec), sub: fmtISOshort(stats.best5k.r.date) },
+    stats.best10k && { label: "10 km (anteilig)", value: secToMMSS(stats.best10k.sec), sub: fmtISOshort(stats.best10k.r.date) },
+    stats.bestWeek && { label: "Beste Woche", value: `${stats.bestWeek.km} km`, sub: `ab ${fmtISOshort(stats.bestWeek.monday)}` },
+  ].filter(Boolean);
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-2">
+        <Eyebrow>Gesamtstatistik</Eyebrow>
+        <InfoToggle label="Woher kommen die Zahlen?">
+          Alles live aus deinen Logs: Aktivitäten = alle abgehakten Einheiten (Laufen + Volleyball + Kraft), Distanz/Zeit aus den erfassten Läufen. „Anteilig" bei 5/10 km heißt: Zeitanteil eines längeren Laufs, kein separat gestopptes Teilstück — die App hat keine Sekundendaten.
+        </InfoToggle>
+      </div>
+      {/* ohne Icons: drei Kacheln nebeneinander sind auf dem iPhone (390px) so schmal, dass selbst
+          kurze Labels mit Icon abgeschnitten würden ("EINHE…") — Text hat hier Vorrang */}
+      <div className="flex gap-2.5 flex-wrap">
+        <Stat label="Einheiten" value={stats.doneCount} accent="#6366f1" />
+        <Stat label="Distanz" value={stats.totalKm} unit="km" accent="#0d9488" />
+        <Stat label="Laufzeit" value={fmtHours(stats.totalSec).split(" ")[0]} unit={fmtHours(stats.totalSec).split(" ")[1]} accent="#7c3aed" />
+      </div>
+      {recs.length > 0 && (
+        <div className="mt-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Persönliche Rekorde</div>
+          <div className="grid grid-cols-2 gap-2">
+            {recs.map((r) => (
+              <div key={r.label} className="rounded-xl bg-slate-100 p-2.5">
+                <div className="text-[10px] font-semibold text-slate-500">{r.label}</div>
+                <div className="font-num font-bold text-slate-800">{r.value}</div>
+                <div className="text-[9.5px] text-slate-400 font-num">{r.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {months.length >= 2 && (
+        <div className="mt-3">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Kilometer pro Monat</div>
+          <div style={{ width: "100%", height: 120 }}><ResponsiveContainer>
+            <BarChart data={months} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
+              <Tooltip formatter={(v) => [`${v} km`, "Laufen"]} {...tipTop(dark)} />
+              <Bar dataKey="km" fill="#6366f1" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer></div>
+        </div>
+      )}
+    </Card>
+  );
+}
+// Kompakte Auszeichnungs-Karte für den Schnellblick: Serie-Hero + neueste Erfolge + nächste Ziele;
+// die vollen Stufen-Leitern klappen auf Wunsch auf (Gym-App-Muster: erreicht satt mit Datum,
+// Zukunft ausgegraut, nächste Stufe mit Fortschrittsbalken).
+function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
+  const [open, setOpen] = useState(false);
+  const visible = badges.filter((b) => !hiddenIds.includes(b.id));
+  const lifetime = visible.filter((b) => b.tier === "lifetime");
+  const live = visible.filter((b) => b.tier === "live");
+  const earnedCount = lifetime.filter((b) => b.earned).length;
+  const today = todayISO();
+  const pinned = lifetime.filter((b) => b.earned && b.earnedDate === today);
+  const recent = lifetime.filter((b) => b.earned && b.earnedDate && b.earnedDate !== today).sort((a, b) => b.earnedDate.localeCompare(a.earnedDate)).slice(0, 3);
+  // Nächste Ziele: je Gruppe die erste offene Stufe, die 2 mit dem meisten Fortschritt zuerst
+  const nextIds = new Set();
+  Object.keys(BADGE_GROUPS).forEach((g) => { const n = lifetime.find((b) => b.group === g && !b.earned && b.target != null); if (n) nextIds.add(n.id); });
+  const nextGoals = lifetime.filter((b) => nextIds.has(b.id)).sort((a, b) => (b.current / b.target) - (a.current / a.target)).slice(0, 2);
+  const liveBest = live.filter((b) => b.earned).slice(-1)[0] || null;
+  const groups = ["run", "strength", "vb", "streak", "milestone"];
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-2">
+        <Eyebrow>Auszeichnungen</Eyebrow>
+        <span className="text-[10px] font-semibold text-slate-400 font-num">{earnedCount} von {lifetime.length}</span>
+      </div>
+      {/* Serie-Hero (Gym-App-Vorbild "Deine Serie beträgt X Wochen") */}
+      <div className="rounded-xl p-3 flex items-center gap-3" style={{ background: liveStreak > 0 ? "linear-gradient(135deg,#881337 0%,#be123c 70%,#e11d48 100%)" : dark ? "#141b2c" : "#f1f5f9" }}>
+        <div className="h-10 w-10 rounded-full flex items-center justify-center shrink-0" style={{ background: liveStreak > 0 ? "rgba(255,255,255,0.18)" : dark ? "#243049" : "#e2e8f0" }}>
+          <Award size={20} color={liveStreak > 0 ? "#fecdd3" : dark ? "#64748b" : "#94a3b8"} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: liveStreak > 0 ? "#fda4af" : dark ? "#64748b" : "#94a3b8" }}>Deine Serie</div>
+          <div className="font-display font-bold text-lg leading-tight" style={{ color: liveStreak > 0 ? "#fff" : dark ? "#94a3b8" : "#64748b" }}>
+            {liveStreak > 0 ? `${liveStreak} ${liveStreak === 1 ? "Woche" : "Wochen"} am Stück` : "Keine laufende Serie"}
+          </div>
+          <div className="text-[10px]" style={{ color: liveStreak > 0 ? "#fecdd3" : dark ? "#64748b" : "#94a3b8" }}>
+            {liveStreak > 0 ? (liveBest ? `Serien-Abzeichen: ${liveBest.title}` : `Nächstes Serien-Abzeichen ab 4 Wochen`) : "Diese Woche zählt wieder — dranbleiben."}
+          </div>
+        </div>
+      </div>
+      {pinned.length > 0 && (
+        <div className="mt-2.5 rounded-xl p-2.5" style={{ background: softBg(dark, "#f59e0b", "#fef3c7") }}>
+          <div className="text-[10px] font-bold uppercase tracking-wider mb-1.5" style={{ color: safeText(dark, "#b45309") }}>Heute erreicht 🎉</div>
+          <div className="space-y-1">{pinned.map((b) => (
+            <div key={b.id} className="flex items-center gap-2">
+              <BadgeGlyph icon={b.icon} size={14} color={safeText(dark, BADGE_GROUPS[b.group].color)} />
+              <span className="text-xs font-semibold" style={{ color: safeText(dark, "#b45309") }}>{b.title}</span>
+            </div>
+          ))}</div>
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div className="mt-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Neueste Erfolge</div>
+          <div className="grid grid-cols-3 gap-2">{recent.map((b) => <BadgeTile key={b.id} badge={b} dark={dark} />)}</div>
+        </div>
+      )}
+      {nextGoals.length > 0 && (
+        <div className="mt-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Nächste Ziele</div>
+          <div className="space-y-1.5">{nextGoals.map((b) => {
+            const g = BADGE_GROUPS[b.group];
+            const pct = Math.min(100, (b.current / b.target) * 100);
+            return (
+              <div key={b.id} className="flex items-center gap-2.5">
+                <div className="h-7 w-7 rounded-full flex items-center justify-center shrink-0" style={{ background: softBg(dark, g.color, g.color + "1f") }}><BadgeGlyph icon={b.icon} size={13} color={safeText(dark, g.color)} /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2"><span className="text-[11px] font-semibold text-slate-700">{b.title}</span><span className="text-[10px] font-num text-slate-400">{Math.round(b.current * 10) / 10}/{b.target}</span></div>
+                  <div className="mt-0.5 h-1.5 rounded-full overflow-hidden" style={{ background: dark ? "#243049" : "#e2e8f0" }}><div className="h-full rounded-full" style={{ width: `${pct}%`, background: g.color }} /></div>
+                </div>
+              </div>
+            );
+          })}</div>
+        </div>
+      )}
+      <button onClick={() => setOpen((o) => !o)} className="mt-3 w-full rounded-xl border-2 border-dashed border-slate-200 py-2 text-[11px] font-semibold text-slate-500 flex items-center justify-center gap-1">
+        {open ? "Leitern einklappen" : "Alle Auszeichnungen"} <ChevronDown size={13} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-2.5 space-y-3">
+          {groups.map((gk) => {
+            const list = visible.filter((b) => b.group === gk && b.tier === "lifetime");
+            const liveList = gk === "streak" ? live : [];
+            if (!list.length && !liveList.length) return null;
+            const firstOpen = list.find((b) => !b.earned && b.target != null);
+            const firstOpenLive = liveList.find((b) => !b.earned);
+            return (
+              <div key={gk}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: safeText(dark, BADGE_GROUPS[gk].color) }}>{BADGE_GROUPS[gk].label}</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {list.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpen && b.id === firstOpen.id} dark={dark} />)}
+                  {liveList.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpenLive && b.id === firstOpenLive.id} dark={dark} />)}
+                </div>
+                {gk === "streak" && liveList.length > 0 && <div className="mt-1 text-[9.5px] text-slate-400">Serien-Abzeichen zeigen die laufende Serie — sie verschwinden, wenn eine Woche reißt.</div>}
+              </div>
+            );
+          })}
+          <InfoToggle label="Wie funktionieren die Abzeichen?">
+            Jedes Abzeichen ist direkt an echte Werte aus deinen Logs gekoppelt — kein Punkte- oder Level-System. Daten bei Volleyball/Plan-Abzeichen sind Plan-Daten der abgehakten Einheiten. Einzelne Abzeichen lassen sich in den Einstellungen ausblenden.
+          </InfoToggle>
+        </div>
+      )}
+    </Card>
+  );
+}
+// Einmaliges Pop-up beim frischen Erreichen (Erreichungsdatum = heute und noch nie gezeigt).
+// Rückwirkend erkannte alte Abzeichen lösen bewusst KEIN Pop-up aus (kein Konfetti für Vergangenes) —
+// sie erscheinen still mit korrektem Datum in "Neueste Erfolge"; seenBadgeIds hält den Gezeigt-Status.
+function BadgePopup({ badges, data, setData, dark }) {
+  const today = todayISO();
+  const seen = data.seenBadgeIds || [];
+  const fresh = badges.filter((b) => b.earned && b.tier === "lifetime" && b.earnedDate === today && !seen.includes(b.id) && !(data.hiddenBadgeIds || []).includes(b.id));
+  const allEarnedIds = badges.filter((b) => b.earned && b.tier === "lifetime").map((b) => b.id);
+  // Ältere/rückwirkende Erfolge still als gesehen markieren, damit sie nie nachträglich aufpoppen
+  useEffect(() => {
+    const missing = allEarnedIds.filter((id) => !seen.includes(id) && !fresh.some((b) => b.id === id));
+    if (missing.length) setData((d) => ({ ...d, seenBadgeIds: [...new Set([...(d.seenBadgeIds || []), ...missing])] }));
+  }, [allEarnedIds.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dismiss = () => setData((d) => ({ ...d, seenBadgeIds: [...new Set([...(d.seenBadgeIds || []), ...fresh.map((b) => b.id)])] }));
+  if (!fresh.length) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(2,6,23,0.55)" }} onClick={dismiss}>
+      <div className="rounded-2xl p-5 w-full max-w-xs text-center shadow-xl" style={{ background: dark ? "#161d2e" : "#ffffff" }} onClick={(e) => e.stopPropagation()}>
+        <div className="mx-auto h-14 w-14 rounded-full flex items-center justify-center mb-3" style={{ background: "linear-gradient(135deg,#f59e0b,#f43f5e)" }}><Award size={26} color="#fff" /></div>
+        <div className="font-display font-bold text-lg" style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>{fresh.length === 1 ? "Abzeichen erreicht!" : `${fresh.length} Abzeichen erreicht!`}</div>
+        <div className="mt-2 space-y-1">{fresh.map((b) => (
+          <div key={b.id} className="flex items-center justify-center gap-2 text-sm font-semibold" style={{ color: safeText(dark, BADGE_GROUPS[b.group].color) }}>
+            <BadgeGlyph icon={b.icon} size={15} color={safeText(dark, BADGE_GROUPS[b.group].color)} /> {b.title}
+          </div>
+        ))}</div>
+        <button onClick={dismiss} className="mt-4 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold">Stark! Weiter</button>
+      </div>
+    </div>
+  );
+}
 function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
   const dark = useDark();
   const today = new Date();
@@ -959,6 +1318,8 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
   const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
+  // v7.0: Auszeichnungen — pure Ableitung aus den Logs (nichts persistiert außer gezeigt/ausgeblendet)
+  const badges = useMemo(() => computeEarnedBadges(data, currentWeek, streak), [data, currentWeek, streak]);
   // v6.2: Laufplan-Fortschritt statt totem externen Link — Gesamtzahl live berechnet (58 nur im Basisfall,
   // siehe runPlanProgress), damit sie bei Krankheit + planEndMode "fixed" korrekt sinkt statt zu lügen.
   const runProgress = useMemo(() => runPlanProgress(data.illnessLog, data.planEndMode), [data.illnessLog, data.planEndMode]);
@@ -1177,6 +1538,13 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
         <div className="mt-2.5 h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.min(100, runPct)}%` }} /></div>
         <div className="mt-2 text-xs font-bold text-indigo-600">{runMotivation}</div>
       </Card>
+
+      {/* v7.0: Gesamtstatistik + Auszeichnungen (Garmin-/Gym-App-inspiriert, aber nur echte Werte) */}
+      <div className="tc-tablet-2col">
+        <GesamtstatistikCard data={data} dark={dark} />
+        <BadgesCard badges={badges} liveStreak={streak} hiddenIds={data.hiddenBadgeIds || []} dark={dark} />
+      </div>
+      <BadgePopup badges={badges} data={data} setData={setData} dark={dark} />
     </div>
   );
 }
@@ -1473,7 +1841,9 @@ function usePairReadout(rowCount) {
 // Easy/Lang/Test haben kein Pace-Ziel (unverändert), nur den HF-Bereich im Puls-Chart.
 function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const dark = useDark();
-  const eff = run.type === "int" || run.type === "tempo" ? runEffort(run) : null;
+  // v7.0: Arbeitsabschnitt für ALLE Lauftypen als Anker (nicht nur int/tempo) — der Gesamtschnitt inkl.
+  // Warm-up/Cool-down verschob bei Easy/Lang die Mitte, sodass fast alle Runden "schneller" wirkten.
+  const eff = runEffort(run);
   const workSet = eff && eff.work ? eff.work : null;
   const refPace = eff ? eff.pace : run.pace;
   const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
@@ -1491,7 +1861,7 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   // auch konstant aussehen.
   const maxDev = Math.max(target ? PACE_BAND_SEC : 10, ...rows.filter((r) => r.dev != null).map((r) => Math.abs(r.dev)));
   const bandPct = target ? Math.min(PACE_BAND_SEC / maxDev, 1) * 50 : 0;
-  const label = eff ? (run.type === "int" ? `${eff.reps}× Arbeit` : "Tempo-Block") + ` Ø ${secToMMSS(Math.round(eff.pace))}/km` : `Ø ${secToMMSS(Math.round(refPace))}/km`;
+  const label = eff ? (run.type === "int" ? `${eff.reps}× Arbeit` : run.type === "tempo" ? "Tempo-Block" : "Lauf-Abschnitt") + ` Ø ${secToMMSS(Math.round(eff.pace))}/km` : `Ø ${secToMMSS(Math.round(refPace))}/km`;
   const muted = dark ? "#64748b" : "#94a3b8", strong = dark ? "#e2e8f0" : "#0f172a";
   const workRows = rows.filter((r) => r.isWork && r.hr != null);
   const decoupling = decouplingPct(workRows);
@@ -1523,45 +1893,57 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
                     ? { right: "50%", width: `${devW}%`, background: "#0d9488" }
                     : { left: "50%", width: `${devW}%`, background: r.dev > 15 ? "#f59e0b" : "#818cf8" }} />
                 ) : (
-                  <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>Pause · {r.dist} km</span>
+                  <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>{run.type === "int" ? "Pause" : "Restrunde"} · {r.dist} km</span>
                 )}
               </div>
             </div>
           );
         })}
       </div>
-      <PulseTrendChart rows={rows} tg={tg} dark={dark} />
+      <PulseTrendChart rows={rows} runType={run.type} tg={tg} dark={dark} />
     </div>
   );
 }
-// v6.4: Puls-Verlauf über alle Runden (Arbeit + Pause, chronologisch verbunden statt isolierter
-// Zahl/Badge pro Zeile) — macht das "steigt nach Start, hält sich dann"-Muster fürs Auge sichtbar,
-// auch ohne Sekundenauflösung (jeder Punkt bleibt ein Rundendurchschnitt). Punktfarbe nach
-// hrPeakStatus: Rundenpeak (minus Toleranz) gegen den Plan-Zielbereich, erste Arbeitsrunde immer
-// neutral (Cardiac Lag nach der Ruhephase davor) — siehe hrPeakStatus-Kommentar für die Begründung.
-function PulseTrendChart({ rows, tg, dark }) {
-  const data = rows.filter((r) => r.hr != null).map((r) => ({ ...r, label: `R${r.lap}` }));
+// v7.0: Geplotteter Wert und Bewertungsfarbe kommen aus EINER Quelle — in v6.4 zeigte die Linie den
+// Runden-Ø, die Farbe bewertete aber den Peak: grüne Punkte hingen sichtbar unterhalb des Zielbands.
+// Intervalle: Arbeitsrunden als Peak−Toleranz (Cardiac-Lag-Begründung bei hrPeakStatus; ohne Peak-Daten
+// Rückfall auf Ø). Alle anderen Lauftypen: Runden-Ø für Wert UND Farbe — dort gibt es keine Pausen,
+// deren Anlaufzeit den Ø verwässert, die Peak-Sonderlogik wäre nur ein unsichtbarer Widerspruch.
+// Erste Arbeitsrunde bleibt lauftyp-übergreifend neutral (Anlauf aus dem Warm-up).
+function pulseTrendRows(rows, runType, tgHr) {
+  const isInt = runType === "int";
+  return rows.filter((r) => r.hr != null).map((r) => {
+    const usePeak = isInt && r.isWork && r.hrMax != null;
+    const plotHr = usePeak ? r.hrMax - HR_PEAK_MARGIN_BPM : r.hr;
+    const status = r.isWork ? hrPeakStatus(r.hr, isInt ? r.hrMax : null, r.isFirstWork, tgHr) : "neutral";
+    return { ...r, plotHr, isPeak: usePeak, status, label: `R${r.lap}` };
+  });
+}
+// v6.4/v7.0: Puls-Verlauf über alle Runden (Arbeit + Pause, chronologisch verbunden) — macht das
+// "steigt nach Start, hält sich dann"-Muster fürs Auge sichtbar. Werte/Farben via pulseTrendRows.
+function PulseTrendChart({ rows, runType, tg, dark }) {
+  const data = pulseTrendRows(rows, runType, tg.hr);
   if (data.length < 2) return null;
   const muted = dark ? "#64748b" : "#94a3b8";
-  const hrVals = data.map((r) => r.hr);
+  const anyPeak = data.some((r) => r.isPeak);
+  const hrVals = data.map((r) => r.plotHr);
   let hLo = Math.min(...hrVals), hHi = Math.max(...hrVals);
   if (tg.hr) { if (tg.hr.lo != null) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
   return (
     <>
-      <div className="text-[10px] font-semibold mt-3 mb-1" style={{ color: safeText(dark, "#e11d48") }}>Puls-Verlauf je Runde</div>
+      <div className="text-[10px] font-semibold mt-3 mb-1" style={{ color: safeText(dark, "#e11d48") }}>Puls-Verlauf je Runde{anyPeak ? " · Arbeitsrunden: Peak −" + HR_PEAK_MARGIN_BPM : ""}</div>
       <div style={{ width: "100%", height: 130 }}><ResponsiveContainer>
         <LineChart data={data} margin={{ top: 14, right: 8, left: -4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
           <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
           <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} allowDecimals={false} />
-          <Tooltip formatter={(v, n, p) => [`${v} bpm${p.payload.isWork ? "" : " · Pause"}`, "Puls"]} {...tipTop(dark)} />
+          <Tooltip formatter={(v, n, p) => [`${v} bpm${p.payload.isPeak ? " (Peak −" + HR_PEAK_MARGIN_BPM + ")" : ""}${p.payload.isWork ? "" : runType === "int" ? " · Pause" : " · Restrunde"}`, "Puls"]} {...tipTop(dark)} />
           {tg.hr && tg.hr.lo != null && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
-          <Line type="monotone" dataKey="hr" stroke={dark ? "#94a3b8" : "#64748b"} strokeWidth={2}
+          <Line type="monotone" dataKey="plotHr" stroke={dark ? "#94a3b8" : "#64748b"} strokeWidth={2}
             dot={(dprops) => {
               const { cx, cy, payload, index } = dprops;
               if (cx == null || cy == null) return null;
-              const status = payload.isWork ? hrPeakStatus(payload.hr, payload.hrMax, payload.isFirstWork, tg.hr) : "neutral";
-              const fill = !payload.isWork ? (dark ? "#334155" : "#e2e8f0") : status === "in" ? "#0d9488" : status === "out" ? "#e11d48" : muted;
+              const fill = !payload.isWork ? (dark ? "#334155" : "#e2e8f0") : payload.status === "in" ? "#0d9488" : payload.status === "out" ? "#e11d48" : muted;
               return <circle key={`hrdot-${index}`} cx={cx} cy={cy} r={payload.isWork ? 4 : 2.5} fill={fill} stroke={dark ? "#0b1220" : "#ffffff"} strokeWidth={1.5} />;
             }} isAnimationActive={false} />
           {tg.hr && tg.hr.lo != null && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
@@ -1880,10 +2262,12 @@ function RunProgress({ data, setData, currentWeek }) {
   const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
   const hrMax = hrMaxTanaka(Number(data.nutrition?.profile?.age) || 18);
+  // v7.0: Arbeitsabschnitt für ALLE Steady-Typen (nicht nur Tempo) — Gesamt-Pace/-HF inkl. Warm-up/
+  // Cool-down verfälschte Pace-HF-Verhältnis und VO₂max bei Easy/Langen Läufen (Nutzer-Befund).
   const steadyPoints = useMemo(() => data.runLog
     .filter((r) => r.hrAvg && STEADY_RUN(r) && r.dist >= 1.5)
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map((r) => { const e = r.type === "tempo" ? runEffort(r) : null; return { iso: r.date, date: fmtISOshort(r.date), type: r.type, pace: e ? e.pace : r.pace, hr: e && e.hr ? e.hr : r.hrAvg }; }), [data.runLog]);
+    .map((r) => { const e = runEffort(r); return { iso: r.date, date: fmtISOshort(r.date), type: r.type, pace: e ? e.pace : r.pace, hr: e && e.hr ? e.hr : r.hrAvg }; }), [data.runLog]);
   const efSeries = useMemo(() => steadyPoints.map((p) => ({ iso: p.iso, date: p.date, type: p.type, ef: efMetersPerBeat(p.pace, p.hr) })).filter((p) => p.ef), [steadyPoints]);
   const vo2Series = useMemo(() => {
     const pts = steadyPoints.map((p) => { const est = estimateVo2max(p.pace, p.hr, hrMax); return est ? { iso: p.iso, date: p.date, est } : null; }).filter(Boolean);
@@ -2817,49 +3201,12 @@ function NutritionTab({ data, setData, plan }) {
   );
 }
 
-/* ===================== V3: GARMIN — strukturierte Workouts als .FIT für die Forerunner ===================== */
-const FIT_EPOCH_OFFSET = 631065600; // Unix-Sekunden am 1989-12-31T00:00Z (FIT-Zeitbasis)
-function fitCrc16(bytes) {
-  const T = [0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401, 0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400];
-  let c = 0;
-  for (let i = 0; i < bytes.length; i++) {
-    const b = bytes[i];
-    let t = T[c & 15]; c = (c >> 4) & 0x0FFF; c = c ^ t ^ T[b & 15];
-    t = T[c & 15]; c = (c >> 4) & 0x0FFF; c = c ^ t ^ T[(b >> 4) & 15];
-  }
-  return c;
-}
-function fitBuf() {
-  const a = [];
-  const b = {
-    a,
-    u8(v) { a.push(v & 255); },
-    u16(v) { b.u8(v); b.u8(v >> 8); },
-    u32(v) { b.u16(v & 0xFFFF); b.u16((v >>> 16) & 0xFFFF); },
-    str(s, len) { for (let i = 0; i < len; i++) b.u8(i < s.length ? s.charCodeAt(i) & 127 : 0); },
-  };
-  return b;
-}
-// Basistypen: enum 0x00 · uint16 0x84 · uint32 0x86 · string 0x07 · uint32z 0x8C
-function fitDef(b, local, global, fields) { b.u8(0x40 | local); b.u8(0); b.u8(0); b.u16(global); b.u8(fields.length); fields.forEach((f) => { b.u8(f[0]); b.u8(f[1]); b.u8(f[2]); }); }
+/* ===================== V3/v7.0: GARMIN — Workout-Rezept für die Uhr =====================
+   v7.0: Der experimentelle .FIT-Datei-Export ist bewusst entfernt (Nutzer-Feedback: praktisch nicht
+   nutzbar; der Hardware-Test kam nie zustande). Das Rezept + Garmin-Connect-Weg bleibt — die interne
+   Schritt-Struktur (WKT/hrTgt/paceTgt) beschreibt weiterhin die Einheit und speist die Rezept-Zeilen. */
 const WKT = { DUR_TIME: 0, DUR_DIST: 1, DUR_OPEN: 5, DUR_REPEAT: 6, TGT_SPEED: 0, TGT_HR: 1, TGT_OPEN: 2, INT_ACTIVE: 0, INT_REST: 1, INT_WARM: 2, INT_COOL: 3 };
-function encodeFitWorkout(name, steps) {
-  const b = fitBuf();
-  fitDef(b, 0, 0, [[0, 1, 0x00], [1, 2, 0x84], [2, 2, 0x84], [3, 4, 0x8C], [4, 4, 0x86]]); // file_id: Typ 5 = Workout
-  b.u8(0); b.u8(5); b.u16(255); b.u16(0); b.u32(1 + Math.floor(Math.random() * 0xFFFFFF)); b.u32(Math.floor(Date.now() / 1000) - FIT_EPOCH_OFFSET);
-  fitDef(b, 1, 26, [[8, 16, 0x07], [4, 1, 0x00], [6, 2, 0x84]]); // workout: Name, Sport (1 = Laufen), Schrittzahl
-  b.u8(1); b.str(name.slice(0, 15), 16); b.u8(1); b.u16(steps.length);
-  fitDef(b, 2, 27, [[254, 2, 0x84], [0, 16, 0x07], [1, 1, 0x00], [2, 4, 0x86], [3, 1, 0x00], [4, 4, 0x86], [5, 4, 0x86], [6, 4, 0x86], [7, 1, 0x00]]); // workout_step
-  steps.forEach((s, i) => { b.u8(2); b.u16(i); b.str((s.name || "").slice(0, 15), 16); b.u8(s.dur); b.u32((s.durVal || 0) >>> 0); b.u8(s.tgt); b.u32((s.tgtVal || 0) >>> 0); b.u32((s.low || 0) >>> 0); b.u32((s.high || 0) >>> 0); b.u8(s.int); });
-  const data = b.a;
-  const h = fitBuf();
-  h.u8(14); h.u8(0x10); h.u16(2140); h.u32(data.length); ".FIT".split("").forEach((c) => h.u8(c.charCodeAt(0)));
-  h.u16(fitCrc16(h.a)); // Header-CRC über die ersten 12 Bytes
-  const all = [...h.a, ...data];
-  const crc = fitCrc16(all);
-  return new Uint8Array([...all, crc & 255, crc >> 8]);
-}
-const hrTgt = (lo, hi) => ({ tgt: WKT.TGT_HR, tgtVal: 0, low: lo + 100, high: hi + 100 }); // FIT-Konvention: bpm = Wert − 100
+const hrTgt = (lo, hi) => ({ tgt: WKT.TGT_HR, tgtVal: 0, low: lo + 100, high: hi + 100 }); // Konvention aus dem FIT-Format beibehalten: bpm = Wert − 100
 const paceTgt = (paceSec, pm = 0.05) => { const v = 1000000 / paceSec; return { tgt: WKT.TGT_SPEED, tgtVal: 0, low: Math.round(v * (1 - pm)), high: Math.round(v * (1 + pm)) }; }; // Geschwindigkeit in mm/s
 const OPEN_TGT = { tgt: WKT.TGT_OPEN, tgtVal: 0, low: 0, high: 0 };
 const parseHrRange = (hr) => { const m = /(\d+)\s*[–-]\s*(\d+)/.exec(hr || ""); return m ? [+m[1], +m[2]] : null; };
@@ -2909,20 +3256,14 @@ function GarminExport({ item, week }) {
   const [copied, setCopied] = useState(false);
   if (!spec) return null;
   const lines = workoutRecipeLines(spec);
-  const download = () => { try { const bytes = encodeFitWorkout(spec.name, spec.steps); const blob = new Blob([bytes], { type: "application/octet-stream" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = spec.name.replace(/\s+/g, "_") + ".fit"; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000); } catch (_) {} };
   const copy = async () => { try { await navigator.clipboard.writeText(spec.name + "\n" + lines.join("\n")); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (_) {} };
   return (
     <div className="rounded-xl bg-slate-100 p-2.5 space-y-2">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500"><Watch size={12} /> Auf die Garmin-Uhr <span className="rounded bg-amber-100 text-amber-700 px-1.5 py-0.5">experimentell</span></div>
+      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-500"><Watch size={12} /> Auf die Garmin-Uhr</div>
       <ul className="space-y-0.5">{lines.map((l, i) => <li key={i} className="text-[10.5px] text-slate-600 font-num">{l}</li>)}</ul>
-      <div className="flex gap-1.5">
-        <button onClick={download} className="flex-1 rounded-lg bg-slate-900 text-white py-2 text-[11px] font-semibold inline-flex items-center justify-center gap-1"><Download size={12} /> .FIT laden</button>
-        <button onClick={copy} className="flex-1 rounded-lg bg-white border border-slate-200 text-slate-700 py-2 text-[11px] font-semibold inline-flex items-center justify-center gap-1"><Copy size={12} /> {copied ? "Kopiert ✓" : "Rezept kopieren"}</button>
-      </div>
+      <button onClick={copy} className="w-full rounded-lg bg-white border border-slate-200 text-slate-700 py-2 text-[11px] font-semibold inline-flex items-center justify-center gap-1"><Copy size={12} /> {copied ? "Kopiert ✓" : "Rezept kopieren"}</button>
       <InfoToggle label="So kommt's auf die Forerunner 55">
-        <b>Mit Kabel:</b> Uhr per USB an den Computer → Laufwerk „GARMIN“ → die .FIT-Datei in den Ordner <b>GARMIN/NEWFILES</b> kopieren → auswerfen. Auf der Uhr: Lauf-Profil → UP lang gedrückt → Training → Trainings → „{spec.name}“ wählen. HF-/Pace-Zielbereiche, Distanzen und Wiederholungen sind voreingestellt — die Uhr führt dich durch jede Stufe.<br />
-        <b>Ohne Kabel:</b> „Rezept kopieren“ und in der Garmin-Connect-App unter Mehr → Training → Trainings 1:1 anlegen — synchronisiert automatisch auf die Uhr.<br />
-        Der Datei-Export ist experimentell: Falls die Uhr das Workout nicht anzeigt, bitte den Connect-Weg nehmen.
+        „Rezept kopieren“ und in der Garmin-Connect-App unter Mehr → Training → Trainings 1:1 anlegen — synchronisiert automatisch auf die Uhr. HF-/Pace-Zielbereiche, Distanzen und Wiederholungen stehen oben fertig aufgelistet; einmal pro Blockwechsel anlegen reicht (die Einheiten ändern sich nur zwischen den Blöcken).
       </InfoToggle>
     </div>
   );
@@ -3131,6 +3472,39 @@ function PlanEndModeCard({ data, setData }) {
     </Card>
   );
 }
+// v7.0: eingebaute Abzeichen einzeln ausblenden (z. B. eine ganze Fernziel-Stufe, die stört) —
+// wirkt nur auf die Anzeige, die Berechnung läuft weiter (Wieder-Einblenden zeigt den echten Stand)
+function BadgesSettingsCard({ data, setData }) {
+  const dark = useDark();
+  const hidden = data.hiddenBadgeIds || [];
+  const toggle = (id) => setData((d) => { const h = d.hiddenBadgeIds || []; return { ...d, hiddenBadgeIds: h.includes(id) ? h.filter((x) => x !== id) : [...h, id] }; });
+  const groups = ["run", "strength", "vb", "streak", "milestone"];
+  return (
+    <Card className="p-4">
+      <Eyebrow>Auszeichnungen</Eyebrow>
+      <p className="text-[11px] text-slate-400 mt-1 mb-2 leading-relaxed">Ausgeblendete Abzeichen verschwinden aus dem Cockpit (auch aus dem Zähler). Die Berechnung läuft weiter — beim Wieder-Einblenden ist der Stand korrekt.</p>
+      <div className="space-y-2.5">
+        {groups.map((gk) => (
+          <div key={gk}>
+            <div className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: safeText(dark, BADGE_GROUPS[gk].color) }}>{BADGE_GROUPS[gk].label}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {BADGE_CATALOG.filter((b) => b.group === gk).map((b) => {
+                const off = hidden.includes(b.id);
+                return (
+                  <button key={b.id} onClick={() => toggle(b.id)}
+                    className={`rounded-full px-2.5 py-1 text-[10.5px] font-semibold border transition ${off ? "bg-white text-slate-300 border-slate-200 line-through" : "border-transparent"}`}
+                    style={off ? {} : { background: softBg(dark, BADGE_GROUPS[gk].color, BADGE_GROUPS[gk].color + "1f"), color: safeText(dark, BADGE_GROUPS[gk].color) }}>
+                    {b.title}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, onClose }) {
   return (
     <div className="space-y-4">
@@ -3144,6 +3518,7 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
       <ThemeCard data={data} setData={setData} />
       <VBSlotsCard data={data} setData={setData} />
       <PlanEndModeCard data={data} setData={setData} />
+      <BadgesSettingsCard data={data} setData={setData} />
       <SyncCard data={data} setData={setData} savedAt={savedAt} onRefresh={onRefresh} refreshing={refreshing} />
       <Card className="p-4">
         <Eyebrow color="#e11d48">Daten zurücksetzen</Eyebrow>
@@ -3514,7 +3889,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v6.4` : "Fortschritt wird automatisch gespeichert · v6.4"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.0` : "Fortschritt wird automatisch gespeichert · v7.0"}</span>
           </footer>
         </main>
       </div>
