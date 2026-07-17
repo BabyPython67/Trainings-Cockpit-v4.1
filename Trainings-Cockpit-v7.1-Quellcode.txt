@@ -373,7 +373,9 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
     // dann Ausfälle anwenden: Einheit bleibt sichtbar, zählt aber nirgends mehr (load 0 → fällt automatisch
     // aus Streak, Wochenlast, Meso-/Wochen-Chart und Kalender-Punkten heraus).
     if (repsByDay[day]) items.push(...repsByDay[day]);
-    items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.load = 0; } });
+    // v7.0: geplante Last vor dem Nullen sichern (originalLoad) — Wochen-Charts sollen einen Ausfall
+    // sichtbar von einem echten Ruhetag unterscheiden können, ohne dass load wieder mitzählt.
+    items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.originalLoad = it.load; it.load = 0; } });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
     // v7.0: Aufbau greift wirklich in die Einheit ein statt nur einen Hinweis anzuhängen (Muster: Taper-Shakeout
@@ -433,7 +435,8 @@ const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 // v7.0: Gesamt-Trainingszeit lesbar machen — unter 1 h in Minuten, sonst h:mm
-const fmtHours = (sec) => { if (!sec) return "0 Min"; const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60); return h ? `${h}:${String(m).padStart(2, "0")} h` : `${m} Min`; };
+// v7.0: Dezimalstunden statt h:mm — gleiche Formatlogik wie die Distanz-Kachel daneben (1 Nachkommastelle)
+const fmtHours = (sec) => Math.round(((sec || 0) / 3600) * 10) / 10;
 
 /* ===================== Schule: Fristen-Ampel ===================== */
 const SCHOOL_ART = [["hausaufgabe", "Hausaufgabe"], ["klausur", "Klausur"]];
@@ -565,9 +568,12 @@ function LoadHelp() {
 function WeekRhythm({ plan, week, highlightToday }) {
   const dark = useDark();
   const monday = mondayOfWeek(week);
+  // v7.0: ausgefallene Einheiten (load 0, aber originalLoad>0) sollen sich sichtbar von einem echten
+  // Ruhetag unterscheiden — bisher wurden beide identisch als leere graue Säule dargestellt.
   const data = plan.map((d, i) => {
     const date = new Date(monday.getTime() + i * DAY_MS);
-    return { day: d.day, load: d.load, dom: dominantSport(d.items), items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
+    const cancelledLoad = d.items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
+    return { day: d.day, load: d.load, cancelledLoad, barHeight: d.load || cancelledLoad, dom: dominantSport(d.items), items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
   });
   const avg = Math.round((data.reduce((s, d) => s + d.load, 0) / 7) * 10) / 10;
   return (
@@ -584,13 +590,30 @@ function WeekRhythm({ plan, week, highlightToday }) {
           labelFormatter={(label, payload) => { const d = payload && payload[0] && payload[0].payload; return d ? DAY_FULL[d.day] : label; }}
           formatter={(value, name, props) => {
             const works = (props.payload.items || []).filter((i) => i.load > 0);
-            const text = works.length ? works.map((i) => `${i.label} ⚡${i.load}`).join(" + ") : "Ruhetag";
-            return [works.length > 1 ? `${text} · Gesamt ⚡${value}` : text, "Plan"];
+            const cancelled = (props.payload.items || []).filter((i) => i.cancelled);
+            if (works.length) {
+              const text = works.map((i) => `${i.label} ⚡${i.load}`).join(" + ");
+              return [works.length > 1 ? `${text} · Gesamt ⚡${props.payload.load}` : text, "Plan"];
+            }
+            if (cancelled.length) return [cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + "), "Plan"];
+            return ["Ruhetag", "Plan"];
           }}
         />
-        <Bar dataKey="load" radius={[4, 4, 0, 0]} maxBarSize={26}>
-          {data.map((d, i) => <Cell key={i} fill={d.load === 0 ? (dark ? "#26334a" : "#e2e8f0") : SPORT[d.dom].color} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}
-          <LabelList dataKey="load" position="top" formatter={(v) => (v > 0 ? `⚡${v}` : "")} style={{ fontSize: 9, fontWeight: 600, fill: dark ? "#94a3b8" : "#64748b" }} />
+        <Bar dataKey="barHeight" radius={[4, 4, 0, 0]} maxBarSize={26}>
+          {data.map((d, i) => {
+            const cancelledOnly = d.load === 0 && d.cancelledLoad > 0;
+            return <Cell key={i}
+              fill={cancelledOnly ? "none" : d.load === 0 ? (dark ? "#26334a" : "#e2e8f0") : SPORT[d.dom].color}
+              stroke={cancelledOnly ? (dark ? "#64748b" : "#94a3b8") : d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"}
+              strokeWidth={cancelledOnly || d.isToday ? 1.5 : 0}
+              strokeDasharray={cancelledOnly ? "3 2" : undefined} />;
+          })}
+          <LabelList dataKey="barHeight" content={({ x, y, width, index }) => {
+            const d = data[index];
+            if (d.load > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={dark ? "#94a3b8" : "#64748b"}>{`⚡${d.load}`}</text>;
+            if (d.cancelledLoad > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={8} fontWeight={600} fill={dark ? "#64748b" : "#94a3b8"}>Ausgefallen</text>;
+            return null;
+          }} />
         </Bar>
       </BarChart>
     </ResponsiveContainer></div>
@@ -842,25 +865,28 @@ function cumulativeRunKmDate(runLog, thresholdKm) {
 // Stufen bewusst weit in die Zukunft gestaffelt (Nutzer-Wunsch: "gute Vorsorge") — ausgegraute
 // Fernziele schaden nicht, verschwundene Nahziele schon.
 const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#059669" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
+// rank/rankTotal je Leiter: treibt die Icon-Ring-Eskalation (jede Stufe sichtbar anders als die davor) —
+// eigenständige Abzeichen ohne Leiter (streak_record, plan_complete) bekommen rank 0/rankTotal 1, was
+// in badgeTierStyle() als "volle Ausbaustufe" behandelt wird (einmalige Auszeichnung, kein Fortschritt).
 const BADGE_CATALOG = [
-  ...[25, 50, 100, 150, 200, 300, 500, 750, 1000].map((km) => ({
-    id: `run_${km}km`, group: "run", tier: "lifetime", title: `${km} km gesamt`, icon: "Mountain", target: km, unit: "km",
+  ...[25, 50, 100, 150, 200, 300, 500, 750, 1000].map((km, i, arr) => ({
+    id: `run_${km}km`, group: "run", tier: "lifetime", title: `${km} km gesamt`, icon: "Mountain", target: km, unit: "km", rank: i, rankTotal: arr.length,
     current: (c) => c.totalRunKm, check: (c) => c.totalRunKm >= km, earnedDate: (c) => cumulativeRunKmDate(c.data.runLog, km),
   })),
-  ...[10, 25, 50, 75, 100, 150, 200].map((n) => ({
-    id: `strength_${n}`, group: "strength", tier: "lifetime", title: `${n} Krafteinheiten`, icon: "Dumbbell", target: n, unit: "Einheiten",
+  ...[10, 25, 50, 75, 100, 150, 200].map((n, i, arr) => ({
+    id: `strength_${n}`, group: "strength", tier: "lifetime", title: `${n} Krafteinheiten`, icon: "Dumbbell", target: n, unit: "Einheiten", rank: i, rankTotal: arr.length,
     current: (c) => c.strengthDays.length, check: (c) => c.strengthDays.length >= n, earnedDate: (c) => c.strengthDays[n - 1] || null,
   })),
-  ...[20, 40, 60, 80, 100, 150, 200].map((n) => ({
-    id: `vb_${n}`, group: "vb", tier: "lifetime", title: `${n} Volleyball-Einheiten`, icon: "vb", target: n, unit: "Einheiten",
+  ...[20, 40, 60, 80, 100, 150, 200].map((n, i, arr) => ({
+    id: `vb_${n}`, group: "vb", tier: "lifetime", title: `${n} Volleyball-Einheiten`, icon: "vb", target: n, unit: "Einheiten", rank: i, rankTotal: arr.length,
     current: (c) => c.vbDates.length, check: (c) => c.vbDates.length >= n, earnedDate: (c) => c.vbDates[n - 1] || null,
   })),
-  { id: "streak_record", group: "streak", tier: "lifetime", title: "Längste Wochen-Serie", icon: "Award", target: null, unit: "Wo.",
+  { id: "streak_record", group: "streak", tier: "lifetime", title: "Längste Wochen-Serie", icon: "Award", target: null, unit: "Wo.", rank: 0, rankTotal: 1,
     current: (c) => c.longStreak.best, check: (c) => c.longStreak.best >= 2, earnedDate: (c) => c.longStreak.date },
-  { id: "plan_complete", group: "milestone", tier: "lifetime", title: "16-Wochen-Laufplan komplett", icon: "Star", target: null, unit: null,
+  { id: "plan_complete", group: "milestone", tier: "lifetime", title: "16-Wochen-Laufplan komplett", icon: "Star", target: null, unit: null, rank: 0, rankTotal: 1,
     current: (c) => c.runDone, check: (c) => c.runTotal > 0 && c.runDone >= c.runTotal, earnedDate: (c) => c.runPlanDates[c.runPlanDates.length - 1] || null },
-  ...[4, 8, 12, 16].map((n) => ({
-    id: `live_streak_${n}`, group: "streak", tier: "live", title: `${n} Wochen am Stück`, icon: "CalendarDays", target: n, unit: "Wo.",
+  ...[4, 8, 12, 16].map((n, i, arr) => ({
+    id: `live_streak_${n}`, group: "streak", tier: "live", title: `${n} Wochen am Stück`, icon: "CalendarDays", target: n, unit: "Wo.", rank: i, rankTotal: arr.length,
     current: (c) => c.liveStreak, check: (c) => c.liveStreak >= n, earnedDate: null,
   })),
 ];
@@ -1088,15 +1114,45 @@ function BadgeGlyph({ icon, size = 15, color }) {
 }
 // Kachel einer Stufen-Leiter: erreicht = satt + Datum, offen = ausgegraut (Titel bleibt lesbar — man
 // soll sehen, worauf man hinarbeitet); die nächste offene Stufe trägt den Fortschrittsbalken.
+// v7.0: Ring-Eskalation, angelehnt an klassische Rang-Abzeichen — jede einzelne Stufe soll sich sichtbar
+// von der vorherigen unterscheiden (Nutzer-Wunsch), nicht nur alle paar Stufen. Zackenzahl wächst mit
+// jeder Stufe (gedeckelt bei 8, sonst wirkt's bei 9-stufigen Leitern auf 34px überladen), Ringbreite/
+// Glow/Sättigung wachsen durchgehend weiter — so ändert sich immer etwas, auch über den Zacken-Deckel
+// hinaus. rankTotal===1 (einmalige Auszeichnungen ohne Leiter) = volle Ausbaustufe.
+function badgeTierStyle(rank, rankTotal) {
+  const t = rankTotal > 1 ? rank / (rankTotal - 1) : 1;
+  return { t, spikes: Math.min(4 + rank, 8), ringPx: 1.5 + t * 2.5, glowPx: 3 + t * 12, glowAlpha: 0.25 + t * 0.4 };
+}
 function BadgeTile({ badge, isNext, dark }) {
   const g = BADGE_GROUPS[badge.group];
   const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
+  const { t, spikes, ringPx, glowPx, glowAlpha } = badgeTierStyle(badge.rank || 0, badge.rankTotal || 1);
+  const earned = badge.earned;
+  const dim = dark ? "#334155" : "#cbd5e1";
+  const size = 34;
+  const glowHex = Math.round(glowAlpha * 255).toString(16).padStart(2, "0");
   return (
     <div className="rounded-xl p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
-      <div className="h-8 w-8 rounded-full flex items-center justify-center" style={{ background: badge.earned ? g.color : dark ? "#243049" : "#e2e8f0" }}>
-        <BadgeGlyph icon={badge.icon} size={15} color={badge.earned ? "#fff" : dark ? "#64748b" : "#94a3b8"} />
+      <div style={{ position: "relative", width: size, height: size }}>
+        {Array.from({ length: spikes }).map((_, i) => (
+          <span key={i} style={{
+            position: "absolute", left: "50%", top: "50%", width: 3, height: 3, borderRadius: 1,
+            background: earned ? g.color : dim, opacity: earned ? 0.5 + t * 0.5 : 0.4,
+            transform: `translate(-50%, -50%) rotate(${(i * 360) / spikes}deg) translateY(${-(size / 2 + 3)}px) rotate(45deg)`,
+          }} />
+        ))}
+        <div className="rounded-full flex items-center justify-center" style={{
+          width: size, height: size, background: earned ? g.color : dark ? "#243049" : "#e2e8f0",
+          border: `${ringPx}px solid ${earned ? g.color : dim}`,
+          boxShadow: earned ? `0 0 ${glowPx}px ${g.color}${glowHex}` : "none",
+        }}>
+          <BadgeGlyph icon={badge.icon} size={15} color={earned ? "#fff" : dark ? "#64748b" : "#94a3b8"} />
+        </div>
       </div>
       <div className="text-[9.5px] font-semibold leading-tight" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{badge.title}</div>
+      {/* v7.0: Abzeichen ohne festes Ziel (z. B. "Längste Wochen-Serie") zeigten bisher nur Titel +
+          Datum, nie die tatsächlich erreichte Zahl — Titel allein war ohne Bezug (Nutzer-Feedback). */}
+      {badge.target == null && badge.unit && badge.current > 0 && <div className="text-[10px] font-bold font-num" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{Math.round(badge.current * 10) / 10} {badge.unit}</div>}
       {badge.earned && badge.earnedDate && <div className="text-[8.5px] font-num" style={{ color: dark ? "#64748b" : "#94a3b8" }}>{fmtISOshort(badge.earnedDate)}</div>}
       {!badge.earned && isNext && badge.target != null && (
         <div className="w-full">
@@ -1129,7 +1185,7 @@ function GesamtstatistikCard({ data, dark }) {
       <div className="flex gap-2.5 flex-wrap">
         <Stat label="Einheiten" value={stats.doneCount} accent="#6366f1" />
         <Stat label="Distanz" value={stats.totalKm} unit="km" accent="#0d9488" />
-        <Stat label="Laufzeit" value={fmtHours(stats.totalSec).split(" ")[0]} unit={fmtHours(stats.totalSec).split(" ")[1]} accent="#7c3aed" />
+        <Stat label="Laufzeit" value={fmtHours(stats.totalSec)} unit="h" accent="#7c3aed" />
       </div>
       {recs.length > 0 && (
         <div className="mt-2.5">
@@ -1497,6 +1553,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
         <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
           {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-slate-400" /> Ausgefallen</span>
         </div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
@@ -2073,8 +2130,33 @@ function TypeProgressCharts({ series, target, hrTarget }) {
   const band = hrTarget ? hrTarget.band : null;
   if (band) { if (band.lo) hLo = Math.min(hLo, band.lo); hHi = Math.max(hHi, band.hi); }
   const selRow = sel != null ? series[sel] : null;
+  // v7.0: der angetippte Punkt hebt sich sichtbar ab (größer + Ring) statt optisch gleich zu bleiben —
+  // die dünne vertikale Linie allein war als Reaktion zu subtil (Nutzer-Feedback).
+  const selDot = (color) => (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return null;
+    const active = index === sel;
+    return <circle key={`d-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill={color} stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
+  };
   return (
     <>
+      {/* v7.0: großer, fett hervorgehobener Werte-Kopf statt kleiner Ablesezeile (Nutzer-Feedback:
+          "zu subtil") — gleiches Muster wie der "aktueller Wert"-Kopf bei VO2max. Per Default (kein
+          Tap) zeigt usePairReadout bereits den letzten Lauf, hier wird das jetzt auch groß sichtbar. */}
+      {selRow && (
+        <div className="flex items-end gap-5 mb-2">
+          <div>
+            <div className="font-num text-2xl font-bold leading-none" style={{ color: safeText(dark, "#4338ca") }}>{secToMMSS(selRow.pace)}<span className="text-xs font-medium text-slate-400">/km</span></div>
+            <div className="text-[10px] text-slate-400 mt-0.5">{selRow.date}{selRow.basis ? ` · ${selRow.basis}` : ""}</div>
+          </div>
+          {selRow.hr != null && (
+            <div>
+              <div className="font-num text-2xl font-bold leading-none" style={{ color: safeText(dark, "#e11d48") }}>{selRow.hr}<span className="text-xs font-medium text-slate-400"> bpm</span></div>
+              <div className="text-[10px] text-slate-400 mt-0.5">Ø-Puls</div>
+            </div>
+          )}
+        </div>
+      )}
       <div className="text-[10px] font-semibold" style={{ color: safeText(dark, "#4338ca") }}>Arbeits-Pace (niedriger = schneller)</div>
       <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
         <LineChart data={series} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
@@ -2084,7 +2166,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
           <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
           {target && <ReferenceArea y1={target - PACE_BAND_SEC} y2={target + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
           {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
-          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={selDot("#6366f1")} isAnimationActive={false} />
           {/* nach der Linie: Chip mit eigenem Hintergrund liegt über der Datenlinie */}
           {target && <ReferenceLine y={target} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(target)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, target, pHi - pLo + 16, "above"))} />}
         </LineChart>
@@ -2100,7 +2182,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
               <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
               {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
               {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
-              <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+              <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={selDot("#e11d48")} connectNulls isAnimationActive={false} />
               {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
               {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
             </LineChart>
@@ -2108,9 +2190,8 @@ function TypeProgressCharts({ series, target, hrTarget }) {
         </>
       )}
       {selRow && (
-        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
-          <b>{selRow.date}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}{selRow.basis ? ` · ${selRow.basis}` : ""}{selRow.fastest ? ` · schnellste ${secToMMSS(Math.round(selRow.fastest))}` : ""}
-          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt den Lauf</span>
+        <div className="mt-1.5 text-[10px]" style={{ color: dark ? "#64748b" : "#94a3b8" }}>
+          {selRow.fastest != null ? `schnellste Einzelrunde ${secToMMSS(Math.round(selRow.fastest))} · ` : ""}antippen wechselt den Lauf
         </div>
       )}
     </>
@@ -2678,7 +2759,7 @@ function stateCellProps(highlight, openValue, sport, dark) {
   if (openValue > 0) return { stroke: dark ? SPORT[sport].bright : SPORT[sport].color, strokeWidth: 1, strokeDasharray: "3 2", strokeOpacity: 0.9 };
   return { stroke: "none", strokeWidth: 0 };
 }
-function StateLegend({ dark, extra }) {
+function StateLegend({ dark, extra, showCancelled }) {
   const c = dark ? "#94a3b8" : "#64748b";
   const sw = { display: "inline-block", width: 10, height: 10, borderRadius: 2, verticalAlign: -1 };
   return (
@@ -2686,6 +2767,9 @@ function StateLegend({ dark, extra }) {
       <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: c }} /> erledigt</span>
       <span className="inline-flex items-center gap-1"><span style={{ ...sw, background: `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 5px)` }} /> entschuldigt (krank)</span>
       <span className="inline-flex items-center gap-1"><span style={{ ...sw, border: `1.5px dashed ${c}`, background: "transparent" }} /> offen</span>
+      {/* v7.0: eigener Legenden-Eintrag, damit Ausfall nicht mit "offen" verwechselt wird — im Chart
+          selbst zusätzlich an der grauen (statt sportfarbenen) Umrandung erkennbar. */}
+      {showCancelled && <span className="inline-flex items-center gap-1"><b style={{ color: c }}>✗</b> ausgefallen</span>}
       {extra && <span>· {extra}</span>}
     </div>
   );
@@ -2727,9 +2811,11 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const weekDays = useMemo(() => {
     const monday = mondayOfWeek(currentWeek);
     return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).map((d, i) => {
-      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick" })) };
-      ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; });
-      row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.load; });
+      // v7.0: ausgefallene Einheiten (load 0, originalLoad>0) gehören mit in die Liste — sonst sieht ein
+      // ausgefallenes Volleyball-Training im Tooltip identisch aus wie ein Tag ohne jede geplante Einheit.
+      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0 || it.cancelled).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick", cancelled: !!it.cancelled, originalLoad: it.originalLoad || 0 })) };
+      ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; row[s + "Cancelled"] = 0; });
+      row.list.forEach((it) => { row[it.sport + (it.cancelled ? "Cancelled" : it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.cancelled ? it.originalLoad : it.load; });
       return row;
     });
   }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode, data.overrides]);
@@ -2832,7 +2918,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
       <Card className="p-4">
         <Eyebrow>Diese Woche: Plan vs. Ist (Woche {currentWeek})</Eyebrow>
-        <StateLegend dark={dark} extra="Umrandung = heute" />
+        <StateLegend dark={dark} extra="Umrandung = heute" showCancelled />
         <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
           <ComposedChart data={weekDays} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
             {hatchDefs("hatchWk", dark)}
@@ -2847,7 +2933,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
                   <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
                   {d.list.length ? d.list.map((it, i) => (
                     <div key={i} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
-                      <span style={{ color: safeText(dark, SPORT[it.sport].color) }}>{it.done ? "✓" : it.excused ? "◐" : "○"}</span> {it.label} ⚡{it.load}{it.done ? "" : it.excused ? " · entschuldigt (krank)" : " · offen"}
+                      <span style={{ color: it.cancelled ? (dark ? "#64748b" : "#94a3b8") : safeText(dark, SPORT[it.sport].color) }}>{it.cancelled ? "✗" : it.done ? "✓" : it.excused ? "◐" : "○"}</span> {it.label}{it.cancelled ? " · ausgefallen, zählt nicht" : ` ⚡${it.load}${it.done ? "" : it.excused ? " · entschuldigt (krank)" : " · offen"}`}
                     </div>
                   )) : <div style={{ color: dark ? "#94a3b8" : "#64748b" }}>Ruhetag</div>}
                 </div>
@@ -2856,6 +2942,9 @@ function RecoveryTab({ data, setData, currentWeek }) {
             {["vb", "run", "strength"].flatMap((s, si) => [
               <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
               <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={`url(#hatchWk-${s})`} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, 0, s, dark)} />)}</Bar>,
+              // v7.0: eigenes, sportneutral-graues Segment für Ausfälle — bisher fiel die originalLoad
+              // komplett raus und der Tag sah aus wie ein nie geplanter Ruhetag.
+              <Bar key={s + "c"} dataKey={s + "Cancelled"} stackId="a" fill="none" maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={dark ? "#64748b" : "#94a3b8"} strokeWidth={1.2} strokeDasharray="3 2" />)}</Bar>,
               <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.12 : 0.09} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} {...stateCellProps(d.isToday, d[s + "Open"], s, dark)} />)}</Bar>,
             ])}
           </ComposedChart>
@@ -3889,7 +3978,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.0` : "Fortschritt wird automatisch gespeichert · v7.0"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.1` : "Fortschritt wird automatisch gespeichert · v7.1"}</span>
           </footer>
         </main>
       </div>

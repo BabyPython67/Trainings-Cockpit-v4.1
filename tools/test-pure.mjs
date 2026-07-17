@@ -476,11 +476,12 @@ t("lifetimeStats: Summen, Rekorde, beste Woche", () => {
   assert.equal(s.bestWeek.km, 12.3); // auf 1 Nachkommastelle gerundet
   assert.equal(s.bestWeek.monday, "2026-06-29");
 });
-t("fmtHours", () => {
-  assert.equal(M.fmtHours(0), "0 Min");
-  assert.equal(M.fmtHours(1740), "29 Min");
-  assert.equal(M.fmtHours(3600), "1:00 h");
-  assert.equal(M.fmtHours(5400), "1:30 h");
+t("fmtHours: Dezimalstunden, 1 Nachkommastelle (Nutzer-Wunsch statt h:mm)", () => {
+  assert.equal(M.fmtHours(0), 0);
+  assert.equal(M.fmtHours(1740), 0.5); // 29 Min
+  assert.equal(M.fmtHours(3600), 1);
+  assert.equal(M.fmtHours(5400), 1.5);
+  assert.equal(M.fmtHours(15000), 4.2); // 4:10 h ≈ 4.17 h → 1 Nachkommastelle
 });
 t("monthlyRunKm: lückenlos, Monatssummen, Jahreslabel nur bei Jahresmix", () => {
   const runs = [

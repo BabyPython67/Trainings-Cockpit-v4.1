@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.0
+# Trainings-Cockpit v7.1
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -43,9 +43,15 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Puls-Verlaufschart konsistent** (Bugfix): Geplotteter Wert und Punktfarbe kommen aus einer Quelle — Intervalle plotten und bewerten Rundenpeak−Toleranz, alle anderen Lauftypen den Runden-Ø. Vorher konnte ein grüner Punkt sichtbar unterhalb des Zielbands hängen (Linie = Ø, Farbe = Peak).
   - **Arbeitsabschnitt konsequent überall** (Bugfix): Rundenlisten-Anker bei Easy/Lang/Test jetzt Arbeits-Pace statt Gesamtschnitt inkl. Warm-up/Cool-down (Kopfzeile "Lauf-Abschnitt Ø …"; Mini-Restrunden zählen nicht als Arbeit); Pace-HF-Verhältnis und VO₂max nutzen bei allen Steady-Läufen die Arbeitswerte. Vollständiger Audit aller Pace-/HF-Verwendungen: verbleibende Gesamtwerte (Lauf-Listenzeile, Import-Vorschau, Kcal) sind bewusste Gesamt-Infos.
   - **.FIT-Export entfernt** (Nutzer-Feedback: praktisch nicht nutzbar) — das Workout-Rezept mit "Kopieren" + Garmin-Connect-Anleitung bleibt und reicht (einmal pro Blockwechsel anlegen).
+- v7.1 – Feedback aus dem ersten v7.0-Testlauf:
+  - **Fortschritt je Lauftyp**: Werte waren zu subtil (nur eine kleine Ablesezeile nach Tap). Jetzt ein fett hervorgehobener Pace-/Puls-Kopf wie bei den Smart-Charts, live sichtbar, und der angetippte Punkt hebt sich im Chart selbst sichtbar ab (größer, mit Ring) statt nur eine dünne Linie zu verschieben.
+  - **Ausgefallene Einheiten** wurden im „Wochenrhythmus" (Cockpit) und in „Diese Woche: Plan vs. Ist" (Recovery) bisher komplett rausgefiltert und sahen dadurch wie ein nie geplanter Ruhetag aus. Beide Charts zeigen Ausfälle jetzt als eigenen, grau gestrichelten Zustand (Tooltip + Legende), getrennt von echten Ruhetagen und von offenen Einheiten.
+  - **Gesamtstatistik**: Laufzeit als Dezimalstunden (z. B. „4.2 h") statt h:min, auf Nutzerwunsch.
+  - **„Längste Wochen-Serie"-Abzeichen** zeigte bisher nur Titel + Datum, nie die tatsächlich erreichte Wochenzahl — jetzt steht sie sichtbar in der Kachel.
+  - **Abzeichen-Icons** bekommen eine Ring-Eskalation: mit jeder einzelnen Stufe wachsen Zackenzahl (gedeckelt), Ringbreite, Glow und Farbsättigung sichtbar weiter — angelehnt an klassische Rang-/Prestige-Abzeichen, jede Stufe unterscheidet sich von der vorherigen.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.0-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.1-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
