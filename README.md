@@ -1,4 +1,4 @@
-# Trainings-Cockpit v6.4
+# Trainings-Cockpit v7.0
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -36,9 +36,16 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Intervall-HF-Bewertung ehrlicher**: der Rundendurchschnitt wird bei Intervallen durch die Anlaufzeit nach jeder Pause (Cardiac Lag) gedrückt — eine ganze Session konnte dadurch fälschlich komplett als „außerhalb des Ziels" markiert werden, obwohl der Puls pro Runde tatsächlich ins Zielband hineinlief. Genutzt wird jetzt der Rundenpeak (aus einer bisher ungenutzten Spalte im Garmin-CSV-Rundenexport) minus einer kleinen Toleranz statt des Durchschnitts; die erste Arbeitsrunde bleibt immer neutral bewertet.
   - **Aufgeklappte Runde entrümpelt**: die generische Kollaps-Übersichtszeile (Ø bpm/spm/Höhenmeter/kcal) wird ausgeblendet, sobald die Runden-Details offen sind — die stapelten sich sonst mit der präziseren Kopfzeile der Rundenliste.
   - **Neue Build-/Test-Infrastruktur**: `tools/` (Build-, Test- und Browser-Verifikationsscripts) und `workflows/ship-version.md` (Ablauf-SOP inkl. bekannter Fallstricke) liegen jetzt im Repo statt nur in einer einzelnen Session — künftige Versionen bauen auf denselben, bereits erprobten Tools auf.
+- v7.0 – Gesamtstatistik, Auszeichnungen und Arbeitsabschnitt-Fixes:
+  - **Gesamtstatistik im Cockpit** (Garmin-inspiriert): Kacheln für abgehakte Einheiten (alle drei Sportarten), Gesamt-Distanz und Gesamt-Laufzeit; persönliche Rekorde (längster Lauf, 5/10 km anteilig aus Läufen ≥ der Distanz, beste Trainingswoche); Kilometer-pro-Monat-Balkenchart.
+  - **Auszeichnungen** (kuratiert, bewusst KEIN Punkte-/Level-System): Lifetime-Abzeichen mit rückwirkend korrektem Erreichungsdatum aus der Historie (Lauf-km 25–1000, Krafteinheiten 10–200 als eindeutige Trainingstage, Volleyball 20–200, längste Wochen-Serie, Laufplan komplett) und Live-Serien-Abzeichen (4/8/12/16 Wochen), die bewusst wieder verschwinden, wenn die Serie reißt. Cockpit-Karte mit Serie-Hero, "Neueste Erfolge", "Nächste Ziele" mit Fortschrittsbalken und aufklappbaren Stufen-Leitern (Zukunft ausgegraut); Pop-up bei frisch erreichtem Abzeichen, heute Erreichtes wird angepinnt; einzelne Abzeichen in den Einstellungen ausblendbar. Alles rein aus den Logs abgeleitet, nichts wird als "erreicht"-Flag gespeichert.
+  - **Aufbau-nach-Krankheit greift jetzt wirklich ein** (Bugfix): Im 3-Tage-Aufbaufenster werden Tempo/Intervalle zur echten Easy-Einheit der Woche (Easy-HF-Band, kein Pace-Ziel, Last 3) und Kraft zum Mobility-Block — vorher stand nur ein Hinweistext neben unveränderten harten Zielwerten. Turniertag bei Krankheit: Text ersetzt statt widersprüchlich angehängt ("Start nur in Absprache … dann mit Vorsicht Bestleistung anstreben").
+  - **Puls-Verlaufschart konsistent** (Bugfix): Geplotteter Wert und Punktfarbe kommen aus einer Quelle — Intervalle plotten und bewerten Rundenpeak−Toleranz, alle anderen Lauftypen den Runden-Ø. Vorher konnte ein grüner Punkt sichtbar unterhalb des Zielbands hängen (Linie = Ø, Farbe = Peak).
+  - **Arbeitsabschnitt konsequent überall** (Bugfix): Rundenlisten-Anker bei Easy/Lang/Test jetzt Arbeits-Pace statt Gesamtschnitt inkl. Warm-up/Cool-down (Kopfzeile "Lauf-Abschnitt Ø …"; Mini-Restrunden zählen nicht als Arbeit); Pace-HF-Verhältnis und VO₂max nutzen bei allen Steady-Läufen die Arbeitswerte. Vollständiger Audit aller Pace-/HF-Verwendungen: verbleibende Gesamtwerte (Lauf-Listenzeile, Import-Vorschau, Kcal) sind bewusste Gesamt-Infos.
+  - **.FIT-Export entfernt** (Nutzer-Feedback: praktisch nicht nutzbar) — das Workout-Rezept mit "Kopieren" + Garmin-Connect-Anleitung bleibt und reicht (einmal pro Blockwechsel anlegen).
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v6.4-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.0-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

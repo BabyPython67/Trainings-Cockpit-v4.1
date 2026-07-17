@@ -280,4 +280,231 @@ t("nur Obergrenze (Test-Lauf 'bis X'): Marge zieht ab, nicht dazu", () => {
 });
 t("weder hr noch hrMax vorhanden → neutral", () => assert.equal(M.hrPeakStatus(null, null, false, { lo: 180, hi: 188 }), "neutral"));
 
+console.log("v7.0 Bugfix A: Aufbau nach Krankheit greift wirklich ein (nicht nur Text)");
+t("Ramp-Tempo/-Intervalle werden zur Easy-Einheit der Woche (Woche 2, Krank-Ende Mo 06.07.)", () => {
+  const ill = [{ id: "i1", start: "2026-07-04", end: "2026-07-06", note: "" }]; // Ramp: Di 07. – Do 09.07.
+  const plan = M.buildWeekPlan(2, undefined, undefined, ill, "fixed");
+  const di = plan.find((d) => d.day === "Di").items.find((i) => i.sport === "run");
+  const doo = plan.find((d) => d.day === "Do").items.find((i) => i.sport === "run");
+  [di, doo].forEach((it) => {
+    assert.equal(it.illness, "ramp");
+    assert.equal(it.type, "easy");
+    assert.equal(it.hr, "130–138"); // Easy-Band der Wochen 1–3, nicht mehr 180–188/162–172
+    assert.equal(it.load, 3);
+    assert.ok(!/@\s*\d/.test(it.desc), it.desc); // kein hartes Pace-Ziel mehr im Text
+    assert.ok(it.desc.startsWith("Aufbau nach Krankheit"));
+  });
+  assert.equal(di.uid, "w2-Di-run"); // uid bleibt stabil — Häkchen gehen nicht verloren
+});
+t("Ramp-Kraft wird zum Mobility-Block (Woche 2, Krank-Ende So 05.07.)", () => {
+  const ill = [{ id: "i1", start: "2026-07-03", end: "2026-07-05", note: "" }]; // Ramp: Mo 06. – Mi 08.07.
+  const st = M.buildWeekPlan(2, undefined, undefined, ill, "fixed").find((d) => d.day === "Mo").items.find((i) => i.sport === "strength");
+  assert.equal(st.illness, "ramp");
+  assert.equal(st.label, M.STRENGTH.mobility.title);
+  assert.deepEqual(st.ex, M.STRENGTH.mobility.ex);
+  assert.equal(st.load, M.STRENGTH.mobility.load);
+  assert.ok(st.uid.startsWith("w2-Mo-str-")); // uid bleibt die der ursprünglichen Einheit
+});
+t("Easy/Langer Lauf bleiben im Ramp unverändert", () => {
+  const ill = [{ id: "i1", start: "2026-07-08", end: "2026-07-09", note: "" }]; // Ramp: Fr–So → Sa = Langer Lauf
+  const sa = M.buildWeekPlan(2, undefined, undefined, ill, "fixed").find((d) => d.day === "Sa").items.find((i) => i.sport === "run");
+  assert.equal(sa.type, "long");
+  assert.equal(sa.illness, undefined);
+  assert.equal(sa.load, 6);
+});
+t("Turniertag krank: Text ersetzt statt angehängt — kein Widerspruch mehr", () => {
+  const ill = [{ id: "i1", start: "2026-07-14", end: "2026-07-16", note: "" }];
+  const tour = M.buildWeekPlan(3, undefined, undefined, ill, "fixed").flatMap((d) => d.items).find((i) => i.tournament);
+  assert.equal(tour.illness, "sick");
+  assert.ok(!tour.desc.includes("Pause empfohlen"), tour.desc);
+  assert.ok(!tour.desc.includes("Schule · Bestleistung anstreben"), tour.desc);
+  assert.ok(tour.desc.includes("in Absprache") && tour.desc.includes("Vorsicht"), tour.desc);
+});
+t("normale Einheiten krank: bisheriger Text unverändert", () => {
+  const ill = [{ id: "i1", start: "2026-07-08", end: "2026-07-09", note: "" }];
+  const vb = M.buildWeekPlan(2, undefined, undefined, ill, "fixed").find((d) => d.day === "Mi").items.find((i) => i.sport === "vb");
+  assert.ok(vb.desc.startsWith("Krank gemeldet — Pause empfohlen"));
+});
+
+console.log("v7.0 Bugfix B: pulseTrendRows — geplotteter Wert = bewerteter Wert");
+t("Intervalle: Arbeitsrunden plotten Peak−Marge, Farbe passt zum geplotteten Wert", () => {
+  const rows = [
+    { lap: 2, hr: 150, hrMax: 185, isWork: true, isFirstWork: true },
+    { lap: 3, hr: 120, hrMax: 140, isWork: false, isFirstWork: false },
+    { lap: 4, hr: 162, hrMax: 185, isWork: true, isFirstWork: false },
+    { lap: 6, hr: 162, hrMax: 181, isWork: true, isFirstWork: false },
+  ];
+  const out = M.pulseTrendRows(rows, "int", { lo: 180, hi: 188 });
+  assert.equal(out[0].plotHr, 180); assert.equal(out[0].status, "neutral"); // erste Arbeitsrunde
+  assert.equal(out[1].plotHr, 120); assert.equal(out[1].status, "neutral"); // Pause: Ø, neutral
+  assert.equal(out[2].plotHr, 180); assert.equal(out[2].status, "in");      // 185−5 im Band
+  assert.equal(out[3].plotHr, 176); assert.equal(out[3].status, "out");     // 181−5 unterm Band
+  out.forEach((r) => { if (r.status !== "neutral") { const inBand = r.plotHr >= 180 && r.plotHr <= 188; assert.equal(r.status === "in", inBand); } });
+});
+t("Intervalle ohne Peak-Daten (alte CSV): Rückfall auf Ø, konsistent", () => {
+  const out = M.pulseTrendRows([{ lap: 2, hr: 185, hrMax: null, isWork: true, isFirstWork: false }], "int", { lo: 180, hi: 188 });
+  assert.equal(out[0].plotHr, 185); assert.equal(out[0].status, "in"); assert.equal(out[0].isPeak, false);
+});
+t("Easy/Lang/Tempo: Ø für Wert UND Farbe — Peak fließt nirgends ein (v6.4-Widerspruch behoben)", () => {
+  const rows = [
+    { lap: 2, hr: 131, hrMax: 150, isWork: true, isFirstWork: true },
+    { lap: 3, hr: 135, hrMax: 155, isWork: true, isFirstWork: false },
+    { lap: 4, hr: 128, hrMax: 149, isWork: true, isFirstWork: false },
+  ];
+  const out = M.pulseTrendRows(rows, "easy", { lo: 130, hi: 138 });
+  assert.equal(out[0].status, "neutral");
+  assert.equal(out[1].plotHr, 135); assert.equal(out[1].status, "in");
+  assert.equal(out[2].plotHr, 128); assert.equal(out[2].status, "out"); // Ø unterm Band → ehrlich "out"
+  out.forEach((r) => assert.equal(r.isPeak, false));
+});
+t("Langer Lauf 04.07. (Screenshot-Fall R9): Ø 135 unter Band 140–155 → nicht mehr grün", () => {
+  const out = M.pulseTrendRows([{ lap: 9, hr: 135, hrMax: 152, isWork: true, isFirstWork: false }], "long", { lo: 140, hi: 155 });
+  assert.equal(out[0].plotHr, 135); assert.equal(out[0].status, "out"); // v6.4 sagte "in" (Peak 152−5=147)
+});
+
+console.log("v7.0 Bugfix C: Arbeitsabschnitt konsequent");
+{
+  const parseSimpleCsv = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    const cells = (line) => line.slice(1, -1).split('","');
+    const header = cells(lines[0]);
+    return lines.slice(1).map((line) => Object.fromEntries(header.map((h, i) => [h, cells(line)[i]])));
+  };
+  const csv = readFileSync(new URL("./fixtures/activity_23580207957_easy1307.csv", import.meta.url), "utf8");
+  const laps = M.extractLaps(parseSimpleCsv(csv));
+  t("Easy 13.07.: runEffort nutzt den Lauf-Abschnitt, 0,02-km-Splitter fliegt raus", () => {
+    const eff = M.runEffort({ type: "easy", laps, dist: 4.27, sec: 1933, pace: 1933 / 4.27 });
+    assert.equal(eff.basis, "Lauf-Abschnitt");
+    assert.equal(eff.dist, 3.95); // R2+R3+R5+R6 — ohne den 0,02-km-Rest (R4)
+    assert.ok(!eff.work.has(4), "Splitter-Runde darf nicht als Arbeit zählen");
+  });
+  t("synthetischer Easy-Lauf mit trägem Warm-up: Anker = Arbeits-Pace, nicht Gesamt", () => {
+    const l = [2, 3, 4, 5].map((lap) => ({ lap, dist: 1, sec: 480, pace: 480, hr: 148, hrMax: 155 }));
+    const eff = M.runEffort({ type: "long", laps: l, dist: 4.6, sec: 2270, pace: 493.5 });
+    assert.equal(Math.round(eff.pace), 480); // nicht 493 (Gesamt) — genau der 04.07.-Screenshot-Fall
+  });
+}
+
+console.log("v7.0: Abzeichen-Katalog & -Berechnung");
+const doneForWeeks = (weeks) => {
+  const done = {};
+  weeks.forEach((w) => M.buildWeekPlan(w, undefined, undefined, [], "fixed").forEach((d) => d.items.forEach((it) => { if (it.load > 0) done[it.uid] = true; })));
+  return done;
+};
+t("longestStreakInfo: längste je erreichte Serie bleibt, auch wenn die aktuelle gerissen ist", () => {
+  const done = doneForWeeks([1, 2, 3, 5, 6]); // Woche 4 fehlt
+  const info = M.longestStreakInfo(7, done, undefined, [], "fixed");
+  assert.equal(info.best, 3);
+  assert.equal(info.date, "2026-07-19"); // Sonntag der Woche 3 — Rekord-Zeitpunkt
+  const live = M.computeStreak(7, done, undefined, [], "fixed");
+  assert.ok(live < info.best, `live ${live} muss < Rekord ${info.best} sein`);
+});
+t("longestStreakInfo: komplett entschuldigte Krankheitswoche bricht die Serie nicht", () => {
+  const done = doneForWeeks([1, 3]); // Woche 2 nicht trainiert …
+  const ill = [{ id: "i1", start: "2026-07-06", end: "2026-07-12", note: "" }]; // … aber komplett krank
+  assert.equal(M.longestStreakInfo(3, done, undefined, ill, "fixed").best, 3);
+  assert.equal(M.longestStreakInfo(3, done, undefined, [], "fixed").best, 1); // ohne Krankmeldung: gerissen
+});
+t("planDoneDatesBySport: Plan-Daten aus der uid, sortiert", () => {
+  const done = { "w1-Mi-vb": true, "w2-Mi-vb": true, "w1-Fr-vb": true };
+  assert.deepEqual(M.planDoneDatesBySport("vb", done, undefined, [], "fixed"), ["2026-07-01", "2026-07-03", "2026-07-08"]);
+});
+t("cumulativeRunKmDate: Datum des Laufs, der die Schwelle reißt", () => {
+  const runs = [{ date: "2026-07-05", dist: 10 }, { date: "2026-07-01", dist: 10 }, { date: "2026-07-10", dist: 6 }]; // unsortiert
+  assert.equal(M.cumulativeRunKmDate(runs, 20), "2026-07-05");
+  assert.equal(M.cumulativeRunKmDate(runs, 25), "2026-07-10");
+  assert.equal(M.cumulativeRunKmDate(runs, 30), null);
+});
+t("Grenzfall 49,9 vs. 50,0 km", () => {
+  const mk = (km) => ({ ...M.DEFAULT_DATA, runLog: [{ id: "a", date: "2026-07-01", type: "easy", dist: km, sec: 3000, pace: 300 }] });
+  assert.equal(M.computeEarnedBadges(mk(49.9), 1, 0).find((b) => b.id === "run_50km").earned, false);
+  assert.equal(M.computeEarnedBadges(mk(50.0), 1, 0).find((b) => b.id === "run_50km").earned, true);
+});
+t("Krafteinheiten = eindeutige Trainingstage, nicht Übungseinträge", () => {
+  const log = [
+    { id: "1", date: "2026-07-01", exercise: "Bank", weight: 40, reps: 8, sets: 3 },
+    { id: "2", date: "2026-07-01", exercise: "Rudern", weight: 35, reps: 10, sets: 3 },
+    { id: "3", date: "2026-07-03", exercise: "Bank", weight: 42, reps: 8, sets: 3 },
+  ];
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, strengthLog: log }, 1, 0).find((x) => x.id === "strength_10");
+  assert.equal(b.current, 2); // 2 Tage, nicht 3 Einträge
+  assert.equal(b.earned, false);
+});
+t("rückwirkendes Datum: run_25km bekommt das historische Überschreitungs-Datum", () => {
+  const data = { ...M.DEFAULT_DATA, runLog: [
+    { id: "a", date: "2026-06-30", type: "easy", dist: 12, sec: 3600, pace: 300 },
+    { id: "b", date: "2026-07-04", type: "long", dist: 14, sec: 4200, pace: 300 },
+    { id: "c", date: "2026-07-10", type: "easy", dist: 5, sec: 1500, pace: 300 },
+  ] };
+  const b = M.computeEarnedBadges(data, 3, 0).find((x) => x.id === "run_25km");
+  assert.equal(b.earned, true);
+  assert.equal(b.earnedDate, "2026-07-04"); // nicht heute — der Lauf, der 25 km voll machte
+});
+t("leerer Account: kein einziges Abzeichen, keine Fehler", () => {
+  const all = M.computeEarnedBadges({ ...M.DEFAULT_DATA }, 1, 0);
+  assert.ok(all.every((b) => !b.earned));
+});
+t("Live-Serie: hängt am durchgereichten Streak-Wert, ohne Datum", () => {
+  const all = M.computeEarnedBadges({ ...M.DEFAULT_DATA }, 1, 8);
+  assert.equal(all.find((b) => b.id === "live_streak_4").earned, true);
+  assert.equal(all.find((b) => b.id === "live_streak_8").earned, true);
+  assert.equal(all.find((b) => b.id === "live_streak_12").earned, false);
+  assert.equal(all.find((b) => b.id === "live_streak_8").earnedDate, null);
+});
+t("Katalog: ids eindeutig, Gruppen bekannt", () => {
+  assert.equal(new Set(M.BADGE_CATALOG.map((b) => b.id)).size, M.BADGE_CATALOG.length);
+  assert.ok(M.BADGE_CATALOG.every((b) => M.BADGE_GROUPS[b.group]));
+});
+
+console.log("v7.0: Gesamtstatistik");
+t("lifetimeStats: Summen, Rekorde, beste Woche", () => {
+  const runs = [
+    { id: "a", date: "2026-06-30", type: "easy", dist: 4.0, sec: 1920, pace: 480 },
+    { id: "b", date: "2026-07-04", type: "long", dist: 8.31, sec: 3478, pace: 418.5 },
+    { id: "c", date: "2026-07-16", type: "easy", dist: 5.01, sec: 2469, pace: 492.8 },
+  ];
+  const s = M.lifetimeStats(runs, { "w1-Mo-run": true, "w1-Mi-vb": true, x: false });
+  assert.equal(s.totalKm, 17.3);
+  assert.equal(s.doneCount, 2); // false zählt nicht
+  assert.equal(s.runCount, 3);
+  assert.equal(s.longest.dist, 8.31);
+  // beide ≥5-km-Läufe kommen infrage — der lange Lauf ist anteilig schneller (2093 s < 2464 s)
+  assert.equal(s.best5k.sec, Math.round(3478 * 5 / 8.31));
+  assert.equal(s.best5k.r.id, "b");
+  assert.equal(s.best10k, null); // noch kein ≥10-km-Lauf → ehrlich leer
+  // 30.06. (Di) und 04.07. (Sa) liegen in derselben Trainingswoche ab Mo 29.06.
+  assert.equal(s.bestWeek.km, 12.3); // auf 1 Nachkommastelle gerundet
+  assert.equal(s.bestWeek.monday, "2026-06-29");
+});
+t("fmtHours", () => {
+  assert.equal(M.fmtHours(0), "0 Min");
+  assert.equal(M.fmtHours(1740), "29 Min");
+  assert.equal(M.fmtHours(3600), "1:00 h");
+  assert.equal(M.fmtHours(5400), "1:30 h");
+});
+t("monthlyRunKm: lückenlos, Monatssummen, Jahreslabel nur bei Jahresmix", () => {
+  const runs = [
+    { date: "2026-05-30", dist: 3 },
+    { date: "2026-07-04", dist: 8.31 },
+    { date: "2026-07-16", dist: 5.01 },
+  ];
+  const m = M.monthlyRunKm(runs, "2026-07-17");
+  assert.deepEqual(m.map((x) => x.key), ["2026-05", "2026-06", "2026-07"]);
+  assert.deepEqual(m.map((x) => x.km), [3, 0, 13.3]); // Juni als 0 dabei, nicht weggelassen
+  assert.ok(m.every((x) => !/\d/.test(x.label))); // ein Jahr → keine Jahreszahl im Label
+  const multi = M.monthlyRunKm([{ date: "2025-12-30", dist: 3 }, { date: "2026-01-04", dist: 4 }], "2026-01-31");
+  assert.deepEqual(multi.map((x) => x.label), ["Dez 25", "Jan 26"]);
+});
+
+console.log("v7.0: Datenmodell & Regression");
+t("DEFAULT_DATA enthält hiddenBadgeIds/seenBadgeIds (Backfill über Spread beim Laden)", () => {
+  assert.deepEqual(M.DEFAULT_DATA.hiddenBadgeIds, []);
+  assert.deepEqual(M.DEFAULT_DATA.seenBadgeIds, []);
+});
+t("buildWeekPlan ohne Krankheit bleibt byte-identisch zu vorher (kein Ramp-Einfluss)", () => {
+  const plan = M.buildWeekPlan(2, undefined, undefined, [], "fixed");
+  const di = plan.find((d) => d.day === "Di").items.find((i) => i.sport === "run");
+  assert.equal(di.type, "int"); assert.equal(di.load, 7); assert.equal(di.hr, "180–188");
+});
+
 console.log(`\nAlle ${n} Tests grün.`);

@@ -21,6 +21,8 @@ export {
   DEFAULT_DATA, DAYS, PLAN_START, TOTAL_WEEKS, PACE_BAND_SEC,
   applyTimeRange, decouplingPct, efMetersPerBeat, TIME_RANGES, runPlanProgress,
   extractLaps, extractExtras, pickCol, hrPeakStatus, HR_PEAK_MARGIN_BPM,
+  longestStreakInfo, planDoneDatesBySport, cumulativeRunKmDate, BADGE_CATALOG, BADGE_GROUPS,
+  computeEarnedBadges, lifetimeStats, monthlyRunKm, pulseTrendRows, fmtHours, STRENGTH,
 };
 EOF
 npx esbuild "$BUILD_DIR/app-test.jsx" --bundle --format=esm --outfile="$BUILD_DIR/pure.mjs" \
