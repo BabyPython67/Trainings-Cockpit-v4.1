@@ -1133,41 +1133,69 @@ function BadgeGlyph({ icon, size = 15, color }) {
   const I = M[icon] || Trophy;
   return <I size={size} color={color} />;
 }
-// Kachel einer Stufen-Leiter: erreicht = satt + Datum, offen = ausgegraut (Titel bleibt lesbar — man
-// soll sehen, worauf man hinarbeitet); die nächste offene Stufe trägt den Fortschrittsbalken.
-// v7.0: Ring-Eskalation, angelehnt an klassische Rang-Abzeichen — jede einzelne Stufe soll sich sichtbar
-// von der vorherigen unterscheiden (Nutzer-Wunsch), nicht nur alle paar Stufen. Zackenzahl wächst mit
-// jeder Stufe (gedeckelt bei 8, sonst wirkt's bei 9-stufigen Leitern auf 34px überladen), Ringbreite/
-// Glow/Sättigung wachsen durchgehend weiter — so ändert sich immer etwas, auch über den Zacken-Deckel
-// hinaus. rankTotal===1 (einmalige Auszeichnungen ohne Leiter) = volle Ausbaustufe.
+// v7.3: Rang-Abzeichen nach Rocket-League-Rangleitern-Vorbild (Nutzer-Referenz) — Fortschritt drückt
+// sich in einer WECHSELNDEN GRUNDFORM aus (Ring -> Sechseck -> Stern -> Diamant, je Quartil der Leiter),
+// nicht mehr nur in Ringdicke/Glow/Punktzahl wie in v7.0/v7.1 (Nutzer-Feedback: "zu subtil, Form/Farbe/
+// Symbol komplett gleich"). Innerhalb einer Grundform zeigen 0-2 eingesetzte, versetzt gedrehte
+// Facetten-Umrisse zusätzliche Detailstufen (analog "I/II/III" im Vorbild). Die letzte Stufe einer
+// echten Leiter (rank===rankTotal-1) bekommt zusätzlich Strahlen — angelehnt an den Grand-Champion-
+// Kranz. rankTotal===1 (einmalige Auszeichnungen ohne Leiter) = volle Ausbaustufe (Diamant, Strahlen).
 function badgeTierStyle(rank, rankTotal) {
   const t = rankTotal > 1 ? rank / (rankTotal - 1) : 1;
-  return { t, spikes: Math.min(4 + rank, 8), ringPx: 1.5 + t * 2.5, glowPx: 3 + t * 12, glowAlpha: 0.25 + t * 0.4 };
+  const shapeTier = Math.min(3, Math.floor(t * 4));
+  const withinTier = t * 4 - shapeTier;
+  const detailLevel = Math.min(2, Math.floor(withinTier * 3));
+  const isPeak = rankTotal > 1 && rank === rankTotal - 1;
+  return { t, shapeTier, detailLevel, isPeak: isPeak || rankTotal === 1, ringPx: 1.5 + t * 2, glowPx: 3 + t * 11, glowAlpha: 0.3 + t * 0.4 };
+}
+// Eckpunkte eines regelmäßigen N-Ecks um (cx,cy), erste Ecke oben (rotOffset dreht den Satz für
+// versetzt wirkende Facetten-Umrisse).
+function polygonPoints(cx, cy, r, sides, rotOffset = 0) {
+  const pts = [];
+  for (let i = 0; i < sides; i++) { const a = ((-90 + rotOffset + (i * 360) / sides) * Math.PI) / 180; pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`); }
+  return pts.join(" ");
+}
+// Fünfzackiger Stern (Gold/Platin-Analogon): 5 äußere + 5 innere Punkte im Wechsel.
+function starPoints(cx, cy, rOuter, rotOffset = 0) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) { const r = i % 2 === 0 ? rOuter : rOuter * 0.48; const a = ((-90 + rotOffset + (i * 360) / 10) * Math.PI) / 180; pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`); }
+  return pts.join(" ");
+}
+const SHAPE_SIDES = [0, 6, 0, 4]; // Index = shapeTier: 0 Kreis, 1 Sechseck, 2 Stern (eigene Funktion), 3 Diamant
+function ShapeOutline({ shapeTier, cx, cy, r, rotOffset = 0, fill, fillOpacity, stroke, strokeWidth }) {
+  if (shapeTier === 0) return <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} />;
+  if (shapeTier === 2) return <polygon points={starPoints(cx, cy, r, rotOffset)} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />;
+  return <polygon points={polygonPoints(cx, cy, r, SHAPE_SIDES[shapeTier], rotOffset)} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />;
+}
+function BadgeShape({ shapeTier, detailLevel, isPeak, size, earned, color, dim, ringPx }) {
+  const cx = size / 2, cy = size / 2, r = size / 2 - 2;
+  const strokeColor = earned ? color : dim;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: "visible", display: "block" }}>
+      {isPeak && Array.from({ length: 8 }).map((_, i) => {
+        const a = ((i * 45 - 90) * Math.PI) / 180;
+        return <line key={i} x1={cx + (r + 1) * Math.cos(a)} y1={cy + (r + 1) * Math.sin(a)} x2={cx + (r + 5) * Math.cos(a)} y2={cy + (r + 5) * Math.sin(a)} stroke={strokeColor} strokeWidth={1.4} strokeLinecap="round" opacity={earned ? 0.75 : 0.35} />;
+      })}
+      <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r} fill={earned ? color : "none"} fillOpacity={earned ? 0.22 : 0} stroke={strokeColor} strokeWidth={ringPx} />
+      {detailLevel >= 1 && <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r * 0.68} rotOffset={18} fill="none" fillOpacity={0} stroke={strokeColor} strokeWidth={1} />}
+      {detailLevel >= 2 && <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r * 0.42} rotOffset={0} fill="none" fillOpacity={0} stroke={strokeColor} strokeWidth={1} />}
+    </svg>
+  );
 }
 function BadgeTile({ badge, isNext, dark }) {
   const g = BADGE_GROUPS[badge.group];
   const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
-  const { t, spikes, ringPx, glowPx, glowAlpha } = badgeTierStyle(badge.rank || 0, badge.rankTotal || 1);
+  const { shapeTier, detailLevel, isPeak, ringPx, glowPx, glowAlpha } = badgeTierStyle(badge.rank || 0, badge.rankTotal || 1);
   const earned = badge.earned;
   const dim = dark ? "#334155" : "#cbd5e1";
   const size = 34;
   const glowHex = Math.round(glowAlpha * 255).toString(16).padStart(2, "0");
   return (
     <div className="rounded-xl p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
-      <div style={{ position: "relative", width: size, height: size }}>
-        {Array.from({ length: spikes }).map((_, i) => (
-          <span key={i} style={{
-            position: "absolute", left: "50%", top: "50%", width: 3, height: 3, borderRadius: 1,
-            background: earned ? g.color : dim, opacity: earned ? 0.5 + t * 0.5 : 0.4,
-            transform: `translate(-50%, -50%) rotate(${(i * 360) / spikes}deg) translateY(${-(size / 2 + 3)}px) rotate(45deg)`,
-          }} />
-        ))}
-        <div className="rounded-full flex items-center justify-center" style={{
-          width: size, height: size, background: earned ? g.color : dark ? "#243049" : "#e2e8f0",
-          border: `${ringPx}px solid ${earned ? g.color : dim}`,
-          boxShadow: earned ? `0 0 ${glowPx}px ${g.color}${glowHex}` : "none",
-        }}>
-          <BadgeGlyph icon={badge.icon} size={15} color={earned ? "#fff" : dark ? "#64748b" : "#94a3b8"} />
+      <div style={{ position: "relative", width: size, height: size, filter: earned ? `drop-shadow(0 0 ${glowPx}px ${g.color}${glowHex})` : "none" }}>
+        <BadgeShape shapeTier={shapeTier} detailLevel={detailLevel} isPeak={isPeak} size={size} earned={earned} color={g.color} dim={dim} ringPx={ringPx} />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <BadgeGlyph icon={badge.icon} size={14} color={earned ? safeText(dark, g.color) : dark ? "#64748b" : "#94a3b8"} />
         </div>
       </div>
       <div className="text-[9.5px] font-semibold leading-tight" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{badge.title}</div>
@@ -2085,6 +2113,16 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
   const vo2F = useMemo(() => applyTimeRange(vo2Series, range), [vo2Series, range]);
   const lastEconomy = economyByType.length ? economyByType[economyByType.length - 1] : null;
   const lastEf = efByType.length ? efByType[efByType.length - 1] : null;
+  // v7.3: Tap-Readout für die Laufökonomie-Rohwerte (Kadenz/Schrittlänge), gleiches Muster wie bei
+  // "Fortschritt je Lauftyp" — Default zeigt den letzten Punkt.
+  const { sel: ecoSel, onPick: onEcoPick } = usePairReadout(economyF.length);
+  const ecoSelRow = ecoSel != null ? economyF[ecoSel] : null;
+  const ecoDot = (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return null;
+    const active = index === ecoSel;
+    return <circle key={`eco-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#0d9488" stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
+  };
   return (
     <Card className="p-4">
       <div className="flex gap-1 rounded-xl bg-slate-100 p-1 mb-3">
@@ -2104,25 +2142,25 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
 
       {metric === "economy" && (
         <>
-          <div className="text-[10px] text-slate-400 mb-2">Schrittfrequenz & Schrittlänge — steigende Frequenz bei stabiler Länge deutet auf bessere Technik hin</div>
-          {lastEconomy && <div className="mb-2 flex items-baseline gap-1.5"><span className="font-num text-xl font-bold text-slate-800">{lastEconomy.cadence} spm</span>{lastEconomy.stride != null && <span className="font-num text-sm text-slate-500">· {lastEconomy.stride} m</span>}<span className="text-[10px] text-slate-400">· aktuell</span></div>}
-          {economyF.length >= 2 ? (
+          <div className="text-[10px] text-slate-400 mb-2">Kadenz geteilt durch Schrittlänge in einer Linie statt zwei Charts — steigt sie, wird der Schritt kürzer/schneller (oft ein Zeichen besserer Lauftechnik); tippen auf einen Punkt zeigt die beiden Rohwerte einzeln</div>
+          {lastEconomy && lastEconomy.ratio != null && <div className="mb-2 flex items-baseline gap-1.5"><span className="font-num text-xl font-bold text-slate-800">{lastEconomy.ratio}</span><span className="text-[10px] text-slate-400">· aktuell</span></div>}
+          {economyF.filter((r) => r.ratio != null).length >= 2 ? (
             <>
-              <div style={{ width: "100%", height: 160 }}><ResponsiveContainer>
-                <LineChart data={economyF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
+                <LineChart data={economyF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} onClick={onEcoPick}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
-                  <YAxis yAxisId="left" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                  <YAxis yAxisId="right" orientation="right" domain={["dataMin-0.1", "dataMax+0.1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
-                  <Tooltip {...tipTop(dark)} />
-                  <Line yAxisId="left" type="linear" dataKey="cadence" name="Schrittfrequenz (spm)" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
-                  <Line yAxisId="right" type="linear" dataKey="stride" name="Schrittlänge (m)" stroke="#a855f7" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2.5, fill: "#a855f7" }} connectNulls />
+                  <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                  <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+                  {ecoSelRow && <ReferenceLine x={ecoSelRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+                  <Line type="linear" dataKey="ratio" stroke="#0d9488" strokeWidth={2.5} dot={ecoDot} connectNulls isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer></div>
-              <div className="flex gap-3 text-[10px] text-slate-500 mt-1">
-                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#0d9488" }} /> Schrittfrequenz</span>
-                <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: "#a855f7" }} /> Schrittlänge</span>
-              </div>
+              {ecoSelRow && (
+                <div className="mt-1.5 text-[10px]" style={{ color: dark ? "#64748b" : "#94a3b8" }}>
+                  {ecoSelRow.date}: {ecoSelRow.cadence} spm{ecoSelRow.stride != null ? ` · ${ecoSelRow.stride} m Schrittlänge` : ""}
+                </div>
+              )}
             </>
           ) : <div className="py-6 text-center text-xs text-slate-400">{economyByType.length >= 2 ? "Zu wenig Daten für diese Auswahl." : "Noch keine Kadenz-Daten — importiere Garmin-Läufe mit Schrittfrequenz."}</div>}
         </>
@@ -2400,7 +2438,16 @@ function RunProgress({ data, setData, currentWeek }) {
   // v7.2: Kadenz/Schrittlänge auf Arbeitsabschnitt umgestellt (wie Pace-HF/VO2max weiter unten) — ohne
   // Runden-Import (manueller Eintrag, Aktivitätenliste) fällt runEffort() auf die Gesamtwerte zurück.
   const economySeries = useMemo(() => data.runLog
-    .map((r) => { const e = runEffort(r); const cadence = e && e.cadence != null ? e.cadence : r.cadence; const stride = e && e.strideLen != null ? e.strideLen : (r.strideLen ?? null); return cadence ? { iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence, stride } : null; })
+    .map((r) => {
+      const e = runEffort(r); const cadence = e && e.cadence != null ? e.cadence : r.cadence; const stride = e && e.strideLen != null ? e.strideLen : (r.strideLen ?? null);
+      // v7.3: Kadenz/Schrittlänge als EIN Verhältniswert statt zwei Linien auf zwei Achsen (Nutzerwunsch:
+      // "besser vergleichen, nicht verwirrt von zwei Charts") — steigt die Kadenz bei kürzerer Schrittlänge,
+      // steigt der Wert, was mit besserer Lauftechnik assoziiert wird. Beide Rohwerte bleiben per Tap einsehbar.
+      // Ganzzahl statt Nachkommastelle: bei 3-stelligen Werten (150-200+) sprengte "172.7" die
+      // Achsenbreite (SVG-Text ragte aus dem Chart) — für einen reinen Trendwert reicht die Tendenz.
+      const ratio = cadence && stride ? Math.round(cadence / stride) : null;
+      return cadence ? { iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence, stride, ratio } : null;
+    })
     .filter(Boolean)
     .sort((a, b) => a.iso.localeCompare(b.iso)), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
@@ -3145,8 +3192,12 @@ function NutritionTab({ data, setData, plan }) {
     return { ...d, nutrition: { ...cur, profile, setup: true, weightLog: [...(cur.weightLog || []), ...seed] } };
   });
 
-  const [entry, setEntry] = useState({ date: todayISO(), kcal: "", label: "", kind: "in", tag: "", savePreset: false });
+  const [entry, setEntry] = useState({ date: todayISO(), kcal: "", label: "", kind: "in", tag: "", savePreset: false, per100g: null, grams: "" });
   const [editPresets, setEditPresets] = useState(false);
+  // v7.3: Schnellwahlen "pro 100g" (z. B. von der Verpackung abgelesen) — beim Eintragen wird die
+  // tatsächliche Menge in Gramm eingegeben, kcal errechnet sich daraus. Bestehende Fixwert-Schnellwahlen
+  // (z. B. "Schulmensa") bleiben unverändert nebendran bestehen, dafür ist ein fester Wert weiterhin sinnvoller.
+  const [newPreset, setNewPreset] = useState({ label: "", per100g: "" });
   const [showProfile, setShowProfile] = useState(false);
   const [wInput, setWInput] = useState("");
   const [undoN, setUndoN] = useState(null);
@@ -3181,11 +3232,23 @@ function NutritionTab({ data, setData, plan }) {
   const todayKey = DAYS[(new Date().getDay() + 6) % 7];
   const todayLoad = plan.find((dd) => dd.day === todayKey)?.load || 0;
 
+  // v7.3: bei einer "pro 100g"-Schnellwahl wird kcal aus Gramm-Eingabe × per100g/100 errechnet statt
+  // direkt eingetippt; die restliche Eintrags-/Preset-Logik (Fixwert-Schnellwahlen, manuelle Eingabe)
+  // bleibt unverändert.
   const addEntry = () => {
-    const k = Math.round(parseNum(entry.kcal)); if (!k) return;
-    const e = { id: uid(), date: entry.date, kcal: k, kind: entry.kind, label: (entry.label || entry.tag || (entry.kind === "out" ? "Aktivität" : "Essen")).trim() };
-    setData((d) => { const cur = d.nutrition; const presets = entry.savePreset ? [...cur.presets.filter((p) => !(p.label === e.label && p.kind === e.kind)), { id: uid(), label: e.label, kcal: k, kind: e.kind }].slice(-12) : cur.presets; return { ...d, nutrition: { ...cur, intake: [...cur.intake, e], presets } }; });
-    setEntry((en) => ({ ...en, kcal: "", label: "", savePreset: false }));
+    const k = entry.per100g != null ? Math.round((entry.per100g * parseNum(entry.grams)) / 100) : Math.round(parseNum(entry.kcal));
+    if (!k) return;
+    const baseLabel = (entry.label || entry.tag || (entry.kind === "out" ? "Aktivität" : "Essen")).trim();
+    const label = entry.per100g != null && parseNum(entry.grams) ? `${baseLabel} (${entry.grams} g)` : baseLabel;
+    const e = { id: uid(), date: entry.date, kcal: k, kind: entry.kind, label };
+    setData((d) => { const cur = d.nutrition; const presets = entry.savePreset && entry.per100g == null ? [...cur.presets.filter((p) => !(p.label === baseLabel && p.kind === e.kind)), { id: uid(), label: baseLabel, kcal: k, kind: e.kind }].slice(-12) : cur.presets; return { ...d, nutrition: { ...cur, intake: [...cur.intake, e], presets } }; });
+    setEntry((en) => ({ ...en, kcal: "", label: "", savePreset: false, per100g: null, grams: "" }));
+  };
+  const addPer100gPreset = () => {
+    const v = parseNum(newPreset.per100g); const label = newPreset.label.trim();
+    if (!v || !label) return;
+    setData((d) => ({ ...d, nutrition: { ...d.nutrition, presets: [...d.nutrition.presets.filter((p) => !(p.label === label && p.kind === "in")), { id: uid(), label, per100g: v, kind: "in" }].slice(-12) } }));
+    setNewPreset({ label: "", per100g: "" });
   };
   const removeEntry = (id) => { const it = nut.intake.find((x) => x.id === id); setData((d) => ({ ...d, nutrition: { ...d.nutrition, intake: d.nutrition.intake.filter((x) => x.id !== id) } })); if (it) pushUndo("Eintrag", () => setData((d) => ({ ...d, nutrition: { ...d.nutrition, intake: [...d.nutrition.intake, it] } }))); };
   const removePreset = (id) => setData((d) => ({ ...d, nutrition: { ...d.nutrition, presets: d.nutrition.presets.filter((p) => p.id !== id) } }));
@@ -3252,20 +3315,43 @@ function NutritionTab({ data, setData, plan }) {
           <div className="mt-2 flex flex-wrap gap-1.5 items-center">
             {nut.presets.filter((p) => p.kind === entry.kind).map((p) => (
               <span key={p.id} className="inline-flex items-center gap-1">
-                <button onClick={() => setEntry({ ...entry, kcal: String(p.kcal), label: p.label })} className="rounded-full bg-slate-100 px-2.5 py-1 text-[10.5px] font-semibold text-slate-600 font-num">{p.label} · {p.kcal}</button>
+                <button
+                  onClick={() => p.per100g != null
+                    ? setEntry({ ...entry, label: p.label, per100g: p.per100g, grams: "", kcal: "" })
+                    : setEntry({ ...entry, kcal: String(p.kcal), label: p.label, per100g: null, grams: "" })}
+                  className="rounded-full bg-slate-100 px-2.5 py-1 text-[10.5px] font-semibold text-slate-600 font-num">
+                  {p.label} · {p.per100g != null ? `${p.per100g}/100g` : p.kcal}
+                </button>
                 {editPresets && <button onClick={() => removePreset(p.id)} className="text-rose-500 text-[11px] font-bold px-0.5">✕</button>}
               </span>
             ))}
             <button onClick={() => setEditPresets((e) => !e)} className="text-[10px] font-semibold text-slate-400 underline">{editPresets ? "fertig" : "bearbeiten"}</button>
           </div>
         )}
+        {editPresets && entry.kind === "in" && (
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <input placeholder="Neu: Name" value={newPreset.label} onChange={(e) => setNewPreset({ ...newPreset, label: e.target.value })} className="tc-input text-[11px] flex-1" />
+            <input inputMode="numeric" placeholder="kcal/100g" value={newPreset.per100g} onChange={(e) => setNewPreset({ ...newPreset, per100g: e.target.value })} className="tc-input text-[11px] w-24 font-num" />
+            <button onClick={addPer100gPreset} className="rounded-lg bg-slate-700 text-white px-2.5 py-1.5 text-[11px] font-semibold shrink-0">+ pro 100g</button>
+          </div>
+        )}
         {entry.kind === "in" && <div className="mt-2 flex flex-wrap gap-1.5">{MEAL_TAGS.map((tg) => <button key={tg} onClick={() => setEntry({ ...entry, tag: entry.tag === tg ? "" : tg })} className={`rounded-full px-2.5 py-1 text-[10.5px] font-semibold border ${entry.tag === tg ? "bg-teal-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{tg}</button>)}</div>}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <input type="date" value={entry.date} onChange={(e) => setEntry({ ...entry, date: e.target.value })} className="tc-input font-num" />
-          <input inputMode="numeric" placeholder="kcal" value={entry.kcal} onChange={(e) => setEntry({ ...entry, kcal: e.target.value })} className="tc-input font-num" />
+          {entry.per100g != null ? (
+            <input inputMode="numeric" placeholder="Gramm" value={entry.grams} onChange={(e) => setEntry({ ...entry, grams: e.target.value })} className="tc-input font-num" />
+          ) : (
+            <input inputMode="numeric" placeholder="kcal" value={entry.kcal} onChange={(e) => setEntry({ ...entry, kcal: e.target.value })} className="tc-input font-num" />
+          )}
           <input placeholder="Was? (optional)" value={entry.label} onChange={(e) => setEntry({ ...entry, label: e.target.value })} className="tc-input" />
         </div>
-        <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" checked={entry.savePreset} onChange={(e) => setEntry({ ...entry, savePreset: e.target.checked })} /> Als Schnellwahl speichern (z. B. „Schulmensa“)</label>
+        {entry.per100g != null && (
+          <div className="mt-1.5 text-[10.5px] text-slate-500 font-num">
+            {parseNum(entry.grams) ? `= ${Math.round((entry.per100g * parseNum(entry.grams)) / 100)} kcal` : `${entry.per100g} kcal/100g — Gramm eingeben`}
+            <button onClick={() => setEntry({ ...entry, per100g: null, grams: "", kcal: "" })} className="ml-2 text-slate-400 underline">Fixwert stattdessen</button>
+          </div>
+        )}
+        {entry.per100g == null && <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" checked={entry.savePreset} onChange={(e) => setEntry({ ...entry, savePreset: e.target.checked })} /> Als Schnellwahl speichern (z. B. „Schulmensa“)</label>}
         <button onClick={addEntry} className="mt-2.5 w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
         {dayEntries.length > 0 && (
           <div className="mt-3 divide-y divide-slate-100 border-t border-slate-200/70">
@@ -4048,7 +4134,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.2` : "Fortschritt wird automatisch gespeichert · v7.2"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.3` : "Fortschritt wird automatisch gespeichert · v7.3"}</span>
           </footer>
         </main>
       </div>
