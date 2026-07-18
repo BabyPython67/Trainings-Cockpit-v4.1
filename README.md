@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.2
+# Trainings-Cockpit v7.3
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -55,9 +55,13 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Ausreißer-Runden erkannt**: die bislang ungenutzte Spalte „Zeit in Bewegung" pro Runde deckt Stopps innerhalb einer Runde auf (z. B. Ampel). Betroffene Runden bekommen eine korrigierte Pace aus der Bewegungszeit statt der Rundenzeit, ihr Puls fließt nicht mehr in Durchschnittswerte (Pace-HF-Verhältnis, VO₂max, Drift-Kennzahl, Puls-Verlaufschart) ein — sichtbar markiert (● + Erklärzeile) statt kommentarlos verworfen.
   - **Kadenz/Schrittlänge** werden jetzt zusätzlich pro Runde eingelesen (bisher nur aus der Gesamtzeile) und in der Laufökonomie-Karte auf den Arbeitsabschnitt umgestellt.
   - Bugfix währenddessen gefunden: eine stopp-korrigierte, künstlich schnell wirkende Pace konnte bei Intervallen die Arbeit/Pause-Cluster-Erkennung kippen und echte Arbeitsrunden fälschlich als Pause einstufen — behoben, indem die Cluster-Erkennung auf der unkorrigierten Rundenzeit-Pace arbeitet, nicht auf der bereits korrigierten Anzeige-Pace.
+- v7.3 – drei Nutzerwünsche aus der Weiterentwicklung nach v7.2:
+  - **Laufökonomie auf einen Blick**: statt zwei Linien auf zwei Achsen (Schrittfrequenz + Schrittlänge, seit v6.1 bewusste Doppelachsen-Ausnahme) jetzt eine Linie — Schrittfrequenz geteilt durch Schrittlänge als ein Vergleichswert, angetippter Punkt zeigt die beiden Rohwerte einzeln darunter (gleiches Tap-Readout-Muster wie „Fortschritt je Lauftyp"). Weniger Chart-Fläche, direkter beantwortbar, ob sich die Technik verbessert.
+  - **Kcal-Tab: Schnellwahlen „pro 100g"**: neben den bestehenden Fixwert-Schnellwahlen (z. B. „Schulmensa") jetzt auch Schnellwahlen mit kcal/100g (von der Verpackung ablesbar) — beim Eintragen wird die tatsächliche Grammzahl eingegeben, kcal errechnet sich automatisch. Verlagert nur die Kopfrechnung von Kopf in App, bleibt im Sinne des ursprünglichen „kein Lebensmittel-Tracking"-Prinzips.
+  - **Abzeichen-Redesign nach Rang-Vorbild** (Nutzer-Referenz: Rocket-League-Rangleiter): Fortschritt drückt sich jetzt in einer wechselnden Grundform aus (Ring → Sechseck → Stern → Diamant, je Quartil einer Stufen-Leiter) statt nur in Ringdicke/Glow/Punktzahl wie in v7.0/v7.1 — das war laut Nutzer-Feedback "zu subtil, Form/Farbe/Symbol komplett gleich". Innerhalb einer Grundform zeigen 0–2 eingesetzte, versetzt gedrehte Facetten-Umrisse zusätzliche Detailstufen. Die letzte Stufe einer Leiter (sowie einmalige Auszeichnungen ohne Leiter) bekommt zusätzlich einen Strahlenkranz.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.2-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.3-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
