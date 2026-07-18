@@ -1170,7 +1170,7 @@ function GesamtstatistikCard({ data, dark }) {
     stats.longest && { label: "Längster Lauf", value: `${stats.longest.dist} km`, sub: fmtISOshort(stats.longest.date) },
     stats.best5k && { label: "5 km (anteilig)", value: secToMMSS(stats.best5k.sec), sub: fmtISOshort(stats.best5k.r.date) },
     stats.best10k && { label: "10 km (anteilig)", value: secToMMSS(stats.best10k.sec), sub: fmtISOshort(stats.best10k.r.date) },
-    stats.bestWeek && { label: "Beste Woche", value: `${stats.bestWeek.km} km`, sub: `ab ${fmtISOshort(stats.bestWeek.monday)}` },
+    stats.bestWeek && { label: "Höchstes Wochenvolumen", value: `${stats.bestWeek.km} km`, sub: `ab ${fmtISOshort(stats.bestWeek.monday)}` },
   ].filter(Boolean);
   return (
     <Card className="p-4">
