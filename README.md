@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.4
+# Trainings-Cockpit v7.5
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -60,9 +60,10 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Kcal-Tab: Schnellwahlen „pro 100g"**: neben den bestehenden Fixwert-Schnellwahlen (z. B. „Schulmensa") jetzt auch Schnellwahlen mit kcal/100g (von der Verpackung ablesbar) — beim Eintragen wird die tatsächliche Grammzahl eingegeben, kcal errechnet sich automatisch. Verlagert nur die Kopfrechnung von Kopf in App, bleibt im Sinne des ursprünglichen „kein Lebensmittel-Tracking"-Prinzips.
   - **Abzeichen-Redesign nach Rang-Vorbild** (Nutzer-Referenz: Rocket-League-Rangleiter): Fortschritt drückt sich jetzt in einer wechselnden Grundform aus (Ring → Sechseck → Stern → Diamant, je Quartil einer Stufen-Leiter) statt nur in Ringdicke/Glow/Punktzahl wie in v7.0/v7.1 — das war laut Nutzer-Feedback "zu subtil, Form/Farbe/Symbol komplett gleich". Innerhalb einer Grundform zeigen 0–2 eingesetzte, versetzt gedrehte Facetten-Umrisse zusätzliche Detailstufen. Die letzte Stufe einer Leiter (sowie einmalige Auszeichnungen ohne Leiter) bekommt zusätzlich einen Strahlenkranz.
 - v7.4 – Schlaf-Pendant zur "Diese Woche"-Bildsprache: neue Karte "Diese Woche: Schlaf" (Recovery-Tab) zeigt einen Balken pro Nacht der aktuellen Woche, heute umrandet, mit der bekannten 8h-Ziellinie — auf Nutzerwunsch, angelehnt an die "Diese Woche: Plan vs. Ist"-Karte. Bewusst kein 1:1-Nachbau: die Mehrzustands-Logik (erledigt/entschuldigt/offen/ausgefallen je Sportart) passt nicht auf Schlaf, der weder Sportart noch ein Tages-Soll hat — Tage ohne Check-in bleiben deshalb einfach eine Lücke statt eines erfundenen Zustands.
+- v7.5 – Cockpit-Tab entschlackt (Nutzer-Feedback: "diffus zu voll", elf Karten auf einer Seite ohne klare Priorität): Heute-Plan (Abhak-Liste) steht jetzt direkt nach Bereitschaft/Empfehlung statt hinter Kcal/Schule — das war bisher der Hauptgrund fürs Öffnen nach dem Sport, stand aber erst an siebter Stelle. Die vier rückblickenden Karten ohne akute Aktion (Ziel-Countdown, Stat-Zeile, Laufplan-Fortschritt, Gesamtstatistik/Abzeichen — zusammen etwa die halbe Seite) sind jetzt in einem einklappbaren „Rückblick & Fortschritt"-Bereich am Ende gebündelt, standardmäßig zu, mit einer kleinen Kennzahl in der Kopfzeile (Streak, Laufplan-%). Wochenrhythmus/Prioritäten/Kcal/Schule unverändert an ihrer Stelle. Reine Positions-/Interaktionsänderung, kein Eingriff ins Datenmodell.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.4-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.5-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
