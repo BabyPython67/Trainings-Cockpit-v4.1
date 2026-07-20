@@ -1153,7 +1153,11 @@ const MEDAL_TIERS = [
   { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#f0d9b8 0%,#cf9a5c 30%,#9c6a34 62%,#6b4520 100%)" },
   { key: "silber", label: "Silber", grad: "linear-gradient(140deg,#e4e9ef 0%,#b0b8c4 32%,#78828f 64%,#434b56 100%)" },
   { key: "gold", label: "Gold", grad: "linear-gradient(140deg,#fff3c4 0%,#f0c04a 30%,#c8901c 62%,#8a5c0a 100%)" },
-  { key: "platin", label: "Platin", grad: "linear-gradient(140deg,#ffffff 0%,#dbe4ee 28%,#aeb9c7 58%,#79808c 100%)" },
+  // v7.9-Fix: Platin war zuvor nur ein helleres Grau (kaum von Silber unterscheidbar) — jetzt ein
+  // eisig-blaues "Diamant"-Blau (Sky-Familie, im Rest der App bislang ungenutzt), das sich klar von
+  // Silbers neutralem Grau absetzt und in gängiger Rang-Bildsprache (Diamond-Rang) als "höchste Stufe"
+  // gelesen wird, ohne mit einer bestehenden Kategorie-/Akzentfarbe (Indigo/Teal/Amber/Rose/Violett) zu kollidieren.
+  { key: "platin", label: "Platin", grad: "linear-gradient(140deg,#ffffff 0%,#bae6fd 30%,#38bdf8 62%,#0369a1 100%)" },
 ];
 // Löst badgeTierStyle ab: statt eines kontinuierlichen Formen-Morphs jetzt ein diskreter Stufen-Index
 // (0=Bronze .. 3=Platin) aus der Rang-Position in der jeweiligen Abzeichen-Leiter. Rein und testbar
@@ -1177,11 +1181,15 @@ function HexMedal({ size, tierIdx, glowAlpha, earned, category, icon, metric, da
   const innerW = rilleW - 2 * ringW;
   const innerLeft = (size - innerW) / 2;
   const innerTop = hexTop + rilleGap + ringW;
-  const hexCenterY = hexTop + outerW / 2; // v7.7-Fix: Icon zentriert sich auf die echte Hex-Mitte, nicht auf einen kopierten Pixel-Offset
-  const iconSize = innerW * 0.5;
   const ribbonCenterY = hexTop + outerW * 0.70; // im breitesten Hex-Bereich (25–75% der Hex-Höhe), nicht nahe der unteren Spitze
   const ribbonH = size * 0.20;
   const ribbonW = innerW * 1.15;
+  // v7.9-Fix: Icon saß bei der echten Hex-Mitte + halber Kacheln-Breite so weit unten, dass es das
+  // Banderolen-Band überlappte (rechnerisch bestätigt: Icon-Unterkante lag unterhalb der Band-Oberkante).
+  // Jetzt Zentrum + Größe so bemessen, dass die Icon-Unterkante immer oberhalb der Band-Oberkante bleibt,
+  // bei Kompakt- wie Detail-Größe gleichermaßen (beides Anteile von hexTop/outerW/innerW, kein Fixwert).
+  const iconCenterY = hexTop + outerW * 0.40;
+  const iconSize = innerW * 0.40;
   const foldW = size * 0.09, foldH = size * 0.16;
   return (
     <div style={{ position: "relative", width: size, height: H, opacity: earned ? 1 : 0.45 }}>
@@ -1193,17 +1201,20 @@ function HexMedal({ size, tierIdx, glowAlpha, earned, category, icon, metric, da
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 45%)" }} />
         {earned && <div style={{ position: "absolute", top: "-30%", left: "-45%", width: "30%", height: "200%", background: "linear-gradient(100deg, transparent 0%, rgba(255,255,255,.75) 50%, transparent 100%)", animation: "badgeShine 2.8s ease-in-out infinite" }} />}
       </div>
-      {/* Banderolen-Zacken: gleiche Rotation/Gradientenrichtung wie das Band, an dessen Rand verankert (v7.7-Fix) */}
-      <div style={{ position: "absolute", left: innerLeft - foldW * 0.55, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, transform: "rotate(-12deg)", background: tier.grad, clipPath: "polygon(0 0,100% 0,100% 100%,0 100%,45% 50%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
-      <div style={{ position: "absolute", left: innerLeft + innerW - foldW * 0.45, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, transform: "rotate(-12deg)", background: tier.grad, clipPath: "polygon(0 0,100% 0,55% 50%,100% 100%,0 100%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
+      {/* Banderolen-Zacken: gleiche (jetzt waagerechte) Ausrichtung/Gradientenrichtung wie das Band,
+          an dessen Rand verankert (v7.7-Fix, Rotation in v7.9 entfernt — s. Band unten) */}
+      <div style={{ position: "absolute", left: innerLeft - foldW * 0.55, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, background: tier.grad, clipPath: "polygon(0 0,100% 0,100% 100%,0 100%,45% 50%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
+      <div style={{ position: "absolute", left: innerLeft + innerW - foldW * 0.45, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, background: tier.grad, clipPath: "polygon(0 0,100% 0,55% 50%,100% 100%,0 100%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
       {/* Banderolen-Band: hinter der Medaille geclippt (Hex-clip-path + contain:paint); Zahl mittig im
-          breitesten Hex-Bereich statt per Padding Richtung Spitze verschoben (v7.7-Fix: Zahl war verdeckt) */}
-      <div style={{ position: "absolute", left: (size - ribbonW) / 2, top: ribbonCenterY - ribbonH / 2, width: ribbonW, height: ribbonH, transform: "rotate(-12deg)", clipPath: HEX_CLIP, overflow: "hidden", contain: "paint" }}>
+          breitesten Hex-Bereich statt per Padding Richtung Spitze verschoben (v7.7-Fix: Zahl war verdeckt).
+          v7.9: waagerecht statt schräg gestellt (Nutzerwunsch), bleibt weiterhin sicher innerhalb der
+          Hex-Klammer, weil die Bandmitte in der breitesten Hex-Zone (25–75% Höhe) liegt. */}
+      <div style={{ position: "absolute", left: (size - ribbonW) / 2, top: ribbonCenterY - ribbonH / 2, width: ribbonW, height: ribbonH, clipPath: HEX_CLIP, overflow: "hidden", contain: "paint" }}>
         <div style={{ position: "absolute", left: (ribbonW - innerW) / 2, top: 0, width: innerW, height: ribbonH, background: tier.grad, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 2px 1px rgba(255,255,255,.5), inset 0 -3px 4px rgba(0,0,0,.3)" }}>
           {metric != null && <span style={{ fontFamily: "'Space Grotesk',monospace", fontStyle: "italic", fontWeight: 800, fontSize: Math.max(size * 0.15, 8), color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,.4)", whiteSpace: "nowrap" }}>{metric}</span>}
         </div>
       </div>
-      <div style={{ position: "absolute", left: "50%", top: hexCenterY, transform: "translate(-50%,-50%)", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }}>
+      <div style={{ position: "absolute", left: "50%", top: iconCenterY, transform: "translate(-50%,-50%)", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }}>
         <BadgeGlyph icon={icon} size={iconSize} color="#fff" />
       </div>
     </div>
@@ -1465,6 +1476,13 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const todayPlan = plan.find((d) => d.day === todayKey);
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const inPlan = today >= PLAN_START && currentWeek <= totalW;
+  // v7.9: "Woche X/Y" in den Hero-Karten zeigt jetzt die um Krankheit bereinigte effektive Trainingswoche
+  // (von TOTAL_WEEKS, dem echten Curriculum) statt der rohen Kalenderwoche (von totalW, dem ggf. durch
+  // Krankheit verlängerten Kalender) — sonst laufen diese Zahl und die "Woche X" bei den Zielpace-Werten
+  // im Fortschritt-Tab (die schon effectiveWeek nutzten) auseinander, sobald man über den krankheitsnahen
+  // Zeitraum hinaus ist. Bug gefunden, weil genau das im Fortschritt-Tab an anderer Stelle bereits als
+  // Label/Werte-Widerspruch existierte (Label zeigte currentWeek, Werte darunter schon effectiveWeek).
+  const effWNow = effectiveWeek(currentWeek, data.illnessLog);
   const recents = [...data.recoveryLog].sort((a, b) => b.date.localeCompare(a.date));
   const latest = recents[0];
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
@@ -1669,7 +1687,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
                     <div className="text-indigo-200 text-[11px] uppercase tracking-wider mt-1">{daysToT > 0 ? "Tage" : "heute!"}</div>
                   </div>
                 </div>
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {currentWeek}/{totalW}</div>
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
                 <div className="mt-3">
                   <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
                   <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
@@ -1688,7 +1706,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
                     <div className="text-emerald-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
                   </div>
                 </div>
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {currentWeek}/{totalW}</div>
+                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
                 <div className="mt-3">
                   <div className="flex justify-between text-[10px] text-emerald-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
                   <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
@@ -2617,7 +2635,11 @@ function RunProgress({ data, setData, currentWeek }) {
         </Card>
       )}
 
-      <Card className="p-4"><Eyebrow color="#4338ca">Zielpace aktuell (Woche {currentWeek})</Eyebrow>
+      {/* v7.9-Bugfix: Label zeigte bisher die rohe Kalenderwoche, die Werte darunter aber schon
+          effectiveWeek — bei Krankheits-Verzug liefen Label und Werte auseinander (Label "Woche 5",
+          aber die angezeigten Zielpaces für die tatsächlich aktuelle effektive Woche 3). Jetzt beide
+          aus derselben effWNow-Quelle. */}
+      <Card className="p-4"><Eyebrow color="#4338ca">Zielpace aktuell (Woche {effWNow})</Eyebrow>
         <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
           <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Intervalle</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("int", effectiveWeek(currentWeek, data.illnessLog)))}/km</div></div>
           <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Tempo</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("tempo", effectiveWeek(currentWeek, data.illnessLog)))}/km</div></div>
@@ -4280,7 +4302,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.8` : "Fortschritt wird automatisch gespeichert · v7.8"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.9` : "Fortschritt wird automatisch gespeichert · v7.9"}</span>
           </footer>
         </main>
       </div>
