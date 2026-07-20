@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.9
+# Trainings-Cockpit v7.10
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -72,9 +72,10 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **Abzeichen-Banderole jetzt waagerecht** (vorher −12° schräg gestellt) — Nutzerwunsch nach dem ersten echten Testen, Rest der Banderole (Zahl mittig, Zacken an den Rändern) unverändert.
   - **Abzeichen-Icon überlappte das Band nicht mehr**: Icon-Position/-Größe rechnerisch so bemessen, dass die Icon-Unterkante bei jeder Medaillen-Größe (34–157px) oberhalb der Band-Oberkante bleibt.
   - **Platin deutlich von Silber abgesetzt**: statt eines nur helleren Graus jetzt ein eisig-blauer "Diamant"-Ton (Sky-Familie, bislang ungenutzt) — liest sich in gängiger Rang-Bildsprache klar als höchste Stufe.
+- v7.10 – Bronze deutlicher von Gold abgesetzt (Nutzerfeedback direkt im Anschluss an v7.9): Bronze war vorher nur eine hellere/blassere Variante von Golds Farbverlauf — beide warme Gelb-Braun-Töne mit ähnlicher Helligkeit am oberen Ende. Jetzt echtes Kupfer-Bronze: rötlicher, matter, insgesamt spürbar dunkler/weniger leuchtend als Gold — liest sich klar als niedrigere Stufe statt als Gold-Abstufung.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.9-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.10-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

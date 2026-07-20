@@ -1150,7 +1150,11 @@ function BadgeGlyph({ icon, size = 15, color }) {
 // bleibt wie im Mockup — kein Neuentwurf, nur diese vier Punkte.
 const HEX_CLIP = "polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)";
 const MEDAL_TIERS = [
-  { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#f0d9b8 0%,#cf9a5c 30%,#9c6a34 62%,#6b4520 100%)" },
+  // v7.10-Fix: Bronze war vorher nur eine hellere/blassere Variante von Golds Farbverlauf (beide warme
+  // Gelb-Braun-Töne, ähnliche Helligkeit am oberen Ende) — sollte aber als spürbar niedrigere/"billigere"
+  // Stufe lesbar sein, nicht nur als Gold-Abstufung. Jetzt echtes Kupfer-Bronze: rötlicher, matter,
+  // insgesamt dunkler/weniger leuchtend als Gold, auch am hellsten Punkt kein annähernd weißer Glanz mehr.
+  { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#c9a876 0%,#a8672e 30%,#7a4a22 62%,#4a2e14 100%)" },
   { key: "silber", label: "Silber", grad: "linear-gradient(140deg,#e4e9ef 0%,#b0b8c4 32%,#78828f 64%,#434b56 100%)" },
   { key: "gold", label: "Gold", grad: "linear-gradient(140deg,#fff3c4 0%,#f0c04a 30%,#c8901c 62%,#8a5c0a 100%)" },
   // v7.9-Fix: Platin war zuvor nur ein helleres Grau (kaum von Silber unterscheidbar) — jetzt ein
@@ -4302,7 +4306,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.9` : "Fortschritt wird automatisch gespeichert · v7.9"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.10` : "Fortschritt wird automatisch gespeichert · v7.10"}</span>
           </footer>
         </main>
       </div>
