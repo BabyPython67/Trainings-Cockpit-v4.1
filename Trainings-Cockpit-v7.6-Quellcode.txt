@@ -16,9 +16,15 @@ import {
 const SPORT = {
   run:      { label: "Laufen",     color: "#6366f1", tint: "#eef2ff", deep: "#4338ca", bright: "#a5b4fc" },
   vb:       { label: "Volleyball", color: "#f59e0b", tint: "#fff7ed", deep: "#b45309", bright: "#fbbf24" },
-  strength: { label: "Kraft",      color: "#059669", tint: "#ecfdf5", deep: "#047857", bright: "#34d399" },
+  strength: { label: "Kraft",      color: "#0d9488", tint: "#f0fdfa", deep: "#0f766e", bright: "#2dd4bf" },
   rest:     { label: "Ruhe",       color: "#94a3b8", tint: "#f1f5f9", deep: "#475569", bright: "#94a3b8" },
 };
+
+/* ===================== Radius-Tokens (v7.6, Design-System-Refresh) ===================== */
+// Karten/Kacheln/Buttons/Hero-Elemente – schärferes Radius-System (Richtung Garmin/Whoop).
+// rounded-xl (12px) und rounded-lg (8px) decken card/button bereits über Tailwind-Schritte ab;
+// RADIUS.tile (10px) hat keinen nativen Tailwind-Schritt und braucht style={{borderRadius}}.
+const RADIUS = { card: 12, tile: 10, button: 8, hero: 16 };
 
 /* ===================== Theme (Hell/Dunkel) ===================== */
 const ThemeContext = React.createContext(false);
@@ -532,14 +538,14 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 
 /* ===================== Bausteine ===================== */
 const Eyebrow = ({ children, color }) => { const dark = useDark(); return <div className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: safeText(dark, color || "#64748b") }}>{children}</div>; };
-const Card = ({ children, className = "", style }) => <div className={`rounded-2xl bg-white border border-slate-200/80 shadow-sm ${className}`} style={style}>{children}</div>;
+const Card = ({ children, className = "", style }) => <div className={`rounded-xl bg-white border border-slate-200/80 shadow-sm ${className}`} style={style}>{children}</div>;
 function SportChip({ sport, small }) {
   const dark = useDark();
   const s = SPORT[sport];
   return <span className={`inline-flex items-center gap-1.5 rounded-full font-semibold ${small ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs"}`} style={{ background: dark ? s.color + "2b" : s.tint, color: dark ? s.bright : s.deep }}><SportGlyph sport={sport} size={small ? 12 : 14} /> {s.label}</span>;
 }
 const Stat = ({ label, value, unit, accent, icon }) => (
-  <Card className="p-3.5 flex-1 min-w-0">
+  <Card className="p-3.5 flex-1 min-w-0" style={{ borderRadius: RADIUS.tile }}>
     <div className="flex items-center gap-1.5 mb-1">{icon}<span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 truncate">{label}</span></div>
     <div className="flex items-baseline gap-1"><span className="font-num text-2xl font-bold leading-none" style={{ color: accent || "#0f172a" }}>{value}</span>{unit && <span className="text-xs font-medium text-slate-400">{unit}</span>}</div>
   </Card>
@@ -623,7 +629,7 @@ const LEVEL_META = {
   none: { label: "Noch keine Daten", color: "#64748b", bright: "#b6c2d1", tint: "#f1f5f9" },
   red: { label: "Vorsicht — runterfahren", color: "#e11d48", bright: "#fb7185", tint: "#ffe4e6" },
   yellow: { label: "Solide — beobachten", color: "#d97706", bright: "#fbbf24", tint: "#ffedd5" },
-  green: { label: "Bereit — voll durchstarten", color: "#0d9488", bright: "#5eead4", tint: "#ccfbf1" },
+  green: { label: "Bereit — voll durchstarten", color: "#059669", bright: "#6ee7b7", tint: "#d1fae5" },
 };
 const LEVEL_ORDER = ["red", "yellow", "green"];
 // Nap "zählt", wenn effektive Minuten (Dauer × Gefühls-Faktor) mind. 15 erreichen —
@@ -881,7 +887,7 @@ function cumulativeRunKmDate(runLog, thresholdKm) {
 }
 // Stufen bewusst weit in die Zukunft gestaffelt (Nutzer-Wunsch: "gute Vorsorge") — ausgegraute
 // Fernziele schaden nicht, verschwundene Nahziele schon.
-const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#059669" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
+const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#0d9488" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
 // rank/rankTotal je Leiter: treibt die Icon-Ring-Eskalation (jede Stufe sichtbar anders als die davor) —
 // eigenständige Abzeichen ohne Leiter (streak_record, plan_complete) bekommen rank 0/rankTotal 1, was
 // in badgeTierStyle() als "volle Ausbaustufe" behandelt wird (einmalige Auszeichnung, kein Fortschritt).
@@ -968,7 +974,7 @@ function monthlyRunKm(runLog, todayIso) {
   if (new Set(out.map((o) => o.key.slice(0, 4))).size > 1) out.forEach((o) => { o.label = `${o.label} ${o.key.slice(2, 4)}`; });
   return out;
 }
-const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
+const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#059669", "#6ee7b7"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
 function dailyRecommendation(todaySessions, level, latest) {
   const works = (todaySessions || []).filter((i) => i.load > 0);
   const test = works.find((i) => i.type === "test");
@@ -1018,7 +1024,7 @@ function UndoToast({ undo, onUndo }) {
   return (
     <div className="fixed left-1/2 -translate-x-1/2 z-30 rounded-xl bg-slate-900 text-white text-xs font-semibold px-4 py-3 flex items-center gap-4 shadow-lg" style={{ bottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}>
       <span>{undo.label} gelöscht</span>
-      <button onClick={onUndo} className="text-teal-300 font-bold">Rückgängig</button>
+      <button onClick={onUndo} className="text-emerald-300 font-bold">Rückgängig</button>
     </div>
   );
 }
@@ -1029,14 +1035,14 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
   const s = SPORT[item.sport];
   const checkable = item.load > 0 && typeof onToggle === "function";
   if (item.tournament) return (
-    <button onClick={checkable ? onToggle : undefined} className="w-full text-left rounded-2xl border shadow-sm p-3.5 flex items-center gap-3 transition active:scale-[0.99]" style={{ background: done ? (dark ? "#7c2d12" : "#fde68a") : softBg(dark, s.color, s.tint), borderColor: "#fbbf24" }}>
+    <button onClick={checkable ? onToggle : undefined} className="w-full text-left rounded-xl border shadow-sm p-3.5 flex items-center gap-3 transition active:scale-[0.99]" style={{ background: done ? (dark ? "#7c2d12" : "#fde68a") : softBg(dark, s.color, s.tint), borderColor: "#fbbf24" }}>
       <div className="h-9 w-9 rounded-xl bg-amber-400 flex items-center justify-center shrink-0"><Trophy size={18} color="#7c2d12" /></div>
       <div className="min-w-0 flex-1"><div className={`font-display font-semibold text-amber-900 ${done ? "line-through" : ""}`}>{item.label}</div><div className="text-xs text-amber-800/80">{item.desc}</div></div>
       {checkable && <CheckBadge done={done} color="#b45309" />}
     </button>
   );
   return (
-    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+    <div className={`rounded-xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
       {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
           sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
       <div className="p-3.5 flex items-center gap-3" style={item.cancelled ? { opacity: 0.6 } : {}}>
@@ -1191,7 +1197,7 @@ function BadgeTile({ badge, isNext, dark }) {
   const size = 34;
   const glowHex = Math.round(glowAlpha * 255).toString(16).padStart(2, "0");
   return (
-    <div className="rounded-xl p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
+    <div className="p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ borderRadius: RADIUS.tile, background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
       <div style={{ position: "relative", width: size, height: size, filter: earned ? `drop-shadow(0 0 ${glowPx}px ${g.color}${glowHex})` : "none" }}>
         <BadgeShape shapeTier={shapeTier} detailLevel={detailLevel} isPeak={isPeak} size={size} earned={earned} color={g.color} dim={dim} ringPx={ringPx} />
         <div className="absolute inset-0 flex items-center justify-center">
@@ -1233,7 +1239,7 @@ function GesamtstatistikCard({ data, dark }) {
           kurze Labels mit Icon abgeschnitten würden ("EINHE…") — Text hat hier Vorrang */}
       <div className="flex gap-2.5 flex-wrap">
         <Stat label="Einheiten" value={stats.doneCount} accent="#6366f1" />
-        <Stat label="Distanz" value={stats.totalKm} unit="km" accent="#0d9488" />
+        <Stat label="Distanz" value={stats.totalKm} unit="km" accent="#059669" />
         <Stat label="Laufzeit" value={fmtHours(stats.totalSec)} unit="h" accent="#7c3aed" />
       </div>
       {/* v7.2: Arbeitsabschnitt-Summen in eigener Zeile, gleich große Kacheln wie oben — auf Nutzerwunsch
@@ -1242,7 +1248,7 @@ function GesamtstatistikCard({ data, dark }) {
         <div className="mt-2.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Davon Arbeitsabschnitt (ohne Warm-up/Cool-down)</div>
           <div className="flex gap-2.5 flex-wrap">
-            <Stat label="Distanz" value={stats.totalWorkKm} unit="km" accent="#0d9488" />
+            <Stat label="Distanz" value={stats.totalWorkKm} unit="km" accent="#059669" />
             <Stat label="Laufzeit" value={fmtHours(stats.totalWorkSec)} unit="h" accent="#7c3aed" />
           </div>
         </div>
@@ -1252,7 +1258,7 @@ function GesamtstatistikCard({ data, dark }) {
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Persönliche Rekorde</div>
           <div className="grid grid-cols-2 gap-2">
             {recs.map((r) => (
-              <div key={r.label} className="rounded-xl bg-slate-100 p-2.5">
+              <div key={r.label} className="bg-slate-100 p-2.5" style={{ borderRadius: RADIUS.tile }}>
                 <div className="text-[10px] font-semibold text-slate-500">{r.label}</div>
                 <div className="font-num font-bold text-slate-800">{r.value}</div>
                 <div className="text-[9.5px] text-slate-400 font-num">{r.sub}</div>
@@ -1470,7 +1476,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   return (
     <div className="space-y-4">
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-2"><Eyebrow>Bereitschaft heute</Eyebrow><button onClick={goRecovery} className="text-[11px] font-semibold text-teal-700 inline-flex items-center gap-0.5">Check-in <ChevronRight size={13} /></button></div>
+        <div className="flex items-center justify-between mb-2"><Eyebrow>Bereitschaft heute</Eyebrow><button onClick={goRecovery} className="text-[11px] font-semibold text-emerald-700 inline-flex items-center gap-0.5">Check-in <ChevronRight size={13} /></button></div>
         <div className="flex items-center gap-3">
           <div className="h-11 w-11 rounded-full flex items-center justify-center shrink-0" style={{ background: dark ? status.color + "26" : status.tint }}><Heart size={20} color={dark ? status.bright : status.color} /></div>
           <div className="min-w-0">
@@ -1542,10 +1548,10 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
         return (
           <button onClick={goKcal} className="w-full text-left">
             <Card className="p-3.5 flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0"><Utensils size={16} className="text-teal-600" /></div>
+              <div className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0"><Utensils size={16} className="text-emerald-600" /></div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between"><span className="text-xs font-semibold text-slate-700">Kcal heute</span><span className="font-num text-[11px] text-slate-500">{inn} / {tgt}</span></div>
-                <div className="mt-1 h-1.5 rounded-full overflow-hidden bg-slate-100"><div className="h-full rounded-full" style={{ width: `${Math.round(p * 100)}%`, background: inn > tgt * 1.07 ? "#d97706" : "#0d9488" }} /></div>
+                <div className="mt-1 h-1.5 rounded-full overflow-hidden bg-slate-100"><div className="h-full rounded-full" style={{ width: `${Math.round(p * 100)}%`, background: inn > tgt * 1.07 ? "#d97706" : "#059669" }} /></div>
               </div>
               <ChevronRight size={15} className="text-slate-300 shrink-0" />
             </Card>
@@ -1563,7 +1569,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           <span className="font-num text-2xl font-bold leading-none text-slate-800">⚡{weekLoad}</span>
           <span className="text-xs text-slate-400">diese Woche</span>
           {prevWeekLoad != null && (
-            <span className={`ml-auto text-xs font-bold font-num ${weekLoad > prevWeekLoad * 1.1 ? "text-amber-600" : weekLoad < prevWeekLoad * 0.9 ? "text-slate-400" : "text-teal-600"}`}>
+            <span className={`ml-auto text-xs font-bold font-num ${weekLoad > prevWeekLoad * 1.1 ? "text-amber-600" : weekLoad < prevWeekLoad * 0.9 ? "text-slate-400" : "text-emerald-600"}`}>
               {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} letzte Woche
             </span>
           )}
@@ -1630,21 +1636,21 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
                 </div>
               </Card>
             ) : (
-              <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#134e4a 0%,#0f766e 55%,#0d9488 100%)" }}>
+              <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#064e3b 0%,#047857 55%,#059669 100%)" }}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <Eyebrow color="#99f6e4">Nächstes Ziel</Eyebrow>
+                    <Eyebrow color="#a7f3d0">Nächstes Ziel</Eyebrow>
                     <div className="font-display text-white text-lg font-semibold mt-0.5">5-km-Testlauf</div>
-                    <div className="text-teal-100 text-xs mt-0.5">Mi {fmtDM(testDay)} · Woche {totalW} · Bestzeit</div>
+                    <div className="text-emerald-100 text-xs mt-0.5">Mi {fmtDM(testDay)} · Woche {totalW} · Bestzeit</div>
                   </div>
                   <div className="text-right">
                     <div className="font-num text-4xl font-bold text-white leading-none">{daysToTest > 0 ? daysToTest : "—"}</div>
-                    <div className="text-teal-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
+                    <div className="text-emerald-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
                   </div>
                 </div>
                 <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {currentWeek}/{totalW}</div>
                 <div className="mt-3">
-                  <div className="flex justify-between text-[10px] text-teal-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
+                  <div className="flex justify-between text-[10px] text-emerald-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
                   <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
                 </div>
               </Card>
@@ -1653,7 +1659,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
             <div className="flex gap-2.5">
               <Stat label="Erledigt (Wo.)" value={totalThisWeek ? `${doneThisWeek}/${totalThisWeek}` : "krank"} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
               <Stat label="Streak" value={streak} unit="Wo." accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
-              <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#0f766e" icon={<Moon size={13} className="text-teal-600" />} />
+              <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#047857" icon={<Moon size={13} className="text-emerald-600" />} />
             </div>
 
             <Card className="p-4">
@@ -1707,9 +1713,9 @@ function StrengthQuickLog({ item, setData }) {
         </select>
         <input inputMode="decimal" placeholder="kg" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} className="tc-input font-num" style={{ flex: 1, minWidth: 0, padding: ".5rem .5rem" }} />
         <input inputMode="numeric" placeholder="Wdh." value={form.reps} onChange={(e) => setForm({ ...form, reps: e.target.value })} className="tc-input font-num" style={{ flex: 1, minWidth: 0, padding: ".5rem .5rem" }} />
-        <button onClick={save} className="h-11 w-11 rounded-lg bg-emerald-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
+        <button onClick={save} className="h-11 w-11 rounded-lg bg-teal-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
       </div>
-      {saved && <div className="text-[10px] font-semibold text-emerald-700 mt-1.5">✓ Gespeichert — Verlauf unter Fortschritt › Kraftwerte</div>}
+      {saved && <div className="text-[10px] font-semibold text-teal-700 mt-1.5">✓ Gespeichert — Verlauf unter Fortschritt › Kraftwerte</div>}
     </div>
   );
 }
@@ -1793,8 +1799,8 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
       <Card className="p-3.5"><div className="flex items-start gap-2"><Info size={15} className="text-slate-400 mt-0.5 shrink-0" /><p className="text-xs text-slate-600 leading-relaxed">{ph.desc}</p></div></Card>
 
       {meta.hasT && <Card className="p-3.5" style={panel(dark, "#f59e0b", "#fff7ed", "#fbbf24")}><div className="flex items-start gap-2"><Trophy size={16} className="text-amber-600 mt-0.5 shrink-0" /><p className="text-xs text-amber-900 leading-relaxed"><b>Turnierwoche.</b> Mo/Di bewusst locker, Intervalle entfallen — am Mittwoch frische Beine fürs Turnier. Danach normaler Aufbau.</p></div></Card>}
-      {isRegen && effPhase === 2 && <Card className="p-3.5" style={panel(dark, "#14b8a6", "#f0fdfa", "#5eead4")}><p className="text-xs leading-relaxed text-teal-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa) — genau deshalb liegt hier die schwere Bein-/Power-Einheit: die Beine sind frei und haben bis zur nächsten harten Laufwoche Zeit zu erholen.</p></Card>}
-      {isRegen && effPhase === 1 && <Card className="p-3.5" style={panel(dark, "#14b8a6", "#f0fdfa", "#5eead4")}><p className="text-xs leading-relaxed text-teal-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa). Volleyball & leichte Kraft laufen weiter — Erholung aktiv steuern.</p></Card>}
+      {isRegen && effPhase === 2 && <Card className="p-3.5" style={panel(dark, "#10b981", "#ecfdf5", "#6ee7b7")}><p className="text-xs leading-relaxed text-emerald-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa) — genau deshalb liegt hier die schwere Bein-/Power-Einheit: die Beine sind frei und haben bis zur nächsten harten Laufwoche Zeit zu erholen.</p></Card>}
+      {isRegen && effPhase === 1 && <Card className="p-3.5" style={panel(dark, "#10b981", "#ecfdf5", "#6ee7b7")}><p className="text-xs leading-relaxed text-emerald-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa). Volleyball & leichte Kraft laufen weiter — Erholung aktiv steuern.</p></Card>}
       {isTestWeek && <Card className="p-3.5" style={panel(dark, "#8b5cf6", "#f5f3ff", "#c4b5fd")}><p className="text-xs leading-relaxed" style={{ color: dark ? "#c4b5fd" : "#6d28d9" }}><b>Testwoche.</b> 5-km-Bestzeit am Mittwoch. Mo & Di sind echte Ruhetage, und das Mittwochs-Volleyball pausiert an dem Tag — Freitag geht's normal weiter.</p></Card>}
 
       <div className="flex justify-end"><LoadHelp /></div>
@@ -1840,7 +1846,7 @@ function ProgressTab({ data, setData, currentWeek }) {
   const [sub, setSub] = useState("run");
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">{[["run", "Laufzeiten", "#6366f1"], ["strength", "Kraftwerte", "#059669"]].map(([k, l, c]) => <button key={k} onClick={() => setSub(k)} className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold border transition ${sub === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={sub === k ? { background: c } : {}}>{l}</button>)}</div>
+      <div className="flex gap-2">{[["run", "Laufzeiten", "#6366f1"], ["strength", "Kraftwerte", "#0d9488"]].map(([k, l, c]) => <button key={k} onClick={() => setSub(k)} className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold border transition ${sub === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={sub === k ? { background: c } : {}}>{l}</button>)}</div>
       {sub === "run" ? <RunProgress data={data} setData={setData} currentWeek={currentWeek} /> : <StrengthProgress data={data} setData={setData} />}
     </div>
   );
@@ -2023,10 +2029,10 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   return (
     <div className="px-4 pb-3 -mt-1">
       <div className="flex items-center gap-2 mb-1 text-[10px] flex-wrap">
-        <span className="font-semibold" style={{ color: safeText(dark, "#0d9488") }}>{label}</span>
+        <span className="font-semibold" style={{ color: safeText(dark, "#059669") }}>{label}</span>
         {target && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#8b5cf6", "#f3e8ff"), color: safeText(dark, "#7c3aed") }}>Ziel {secToMMSS(target)} ±{PACE_BAND_SEC}s</span>}
-        {tg.hr && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#0d9488", "#ccfbf1"), color: safeText(dark, "#0d9488") }}>HF-Ziel {tg.hrLabel}</span>}
-        {decoupling != null && <span className="font-bold" style={{ color: decoupling > 5 ? safeText(dark, "#e11d48") : decoupling < -5 ? safeText(dark, "#0d9488") : muted }}>{decoupling > 0 ? "+" : ""}{decoupling}% Drift</span>}
+        {tg.hr && <span className="rounded-full px-1.5 py-px font-semibold" style={{ background: softBg(dark, "#059669", "#d1fae5"), color: safeText(dark, "#059669") }}>HF-Ziel {tg.hrLabel}</span>}
+        {decoupling != null && <span className="font-bold" style={{ color: decoupling > 5 ? safeText(dark, "#e11d48") : decoupling < -5 ? safeText(dark, "#059669") : muted }}>{decoupling > 0 ? "+" : ""}{decoupling}% Drift</span>}
       </div>
       <div className="flex items-center gap-3 mb-1.5 text-[10px]" style={{ color: muted }}>
         <span>◄ schneller · langsamer ►</span>
@@ -2045,7 +2051,7 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
                 <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: dark ? "#3b4a63" : "#cbd5e1" }} />
                 {r.dev != null ? (
                   <div className="absolute inset-y-0.5 rounded-sm" style={faster
-                    ? { right: "50%", width: `${devW}%`, background: "#0d9488" }
+                    ? { right: "50%", width: `${devW}%`, background: "#059669" }
                     : { left: "50%", width: `${devW}%`, background: r.dev > 15 ? "#f59e0b" : "#818cf8" }} />
                 ) : (
                   <span className="absolute inset-0 flex items-center justify-center text-[9px]" style={{ color: muted }}>{run.type === "int" ? "Pause" : "Restrunde"} · {r.dist} km</span>
@@ -2096,15 +2102,15 @@ function PulseTrendChart({ rows, runType, tg, dark }) {
           <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
           <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} allowDecimals={false} />
           <Tooltip formatter={(v, n, p) => [`${v} bpm${p.payload.isPeak ? " (Peak −" + HR_PEAK_MARGIN_BPM + ")" : ""}${p.payload.isWork ? "" : runType === "int" ? " · Pause" : " · Restrunde"}`, "Puls"]} {...tipTop(dark)} />
-          {tg.hr && tg.hr.lo != null && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+          {tg.hr && tg.hr.lo != null && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#10b981" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
           <Line type="monotone" dataKey="plotHr" stroke={dark ? "#94a3b8" : "#64748b"} strokeWidth={2}
             dot={(dprops) => {
               const { cx, cy, payload, index } = dprops;
               if (cx == null || cy == null) return null;
-              const fill = !payload.isWork ? (dark ? "#334155" : "#e2e8f0") : payload.status === "in" ? "#0d9488" : payload.status === "out" ? "#e11d48" : muted;
+              const fill = !payload.isWork ? (dark ? "#334155" : "#e2e8f0") : payload.status === "in" ? "#059669" : payload.status === "out" ? "#e11d48" : muted;
               return <circle key={`hrdot-${index}`} cx={cx} cy={cy} r={payload.isWork ? 4 : 2.5} fill={fill} stroke={dark ? "#0b1220" : "#ffffff"} strokeWidth={1.5} />;
             }} isAnimationActive={false} />
-          {tg.hr && tg.hr.lo != null && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+          {tg.hr && tg.hr.lo != null && <ReferenceLine y={tg.hr.hi} stroke="#10b981" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#059669", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
           {tg.hr && tg.hr.lo == null && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
         </LineChart>
       </ResponsiveContainer></div>
@@ -2137,13 +2143,13 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
     const { cx, cy, index } = props;
     if (cx == null || cy == null) return null;
     const active = index === ecoSel;
-    return <circle key={`eco-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#0d9488" stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
+    return <circle key={`eco-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#059669" stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
   };
   return (
     <Card className="p-4">
       <div className="flex gap-1 rounded-xl bg-slate-100 p-1 mb-3">
         {SMART_METRICS.map(([v, l]) => (
-          <button key={v} onClick={() => setMetric(v)} className={`flex-1 rounded-lg py-1.5 text-[11px] font-bold transition ${metric === v ? "bg-white shadow-sm text-teal-700" : "text-slate-500"}`}>{l}</button>
+          <button key={v} onClick={() => setMetric(v)} className={`flex-1 rounded-lg py-1.5 text-[11px] font-bold transition ${metric === v ? "bg-white shadow-sm text-emerald-700" : "text-slate-500"}`}>{l}</button>
         ))}
       </div>
       <div className="flex items-center gap-1.5 mb-2">
@@ -2169,7 +2175,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
                   <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
                   <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
                   {ecoSelRow && <ReferenceLine x={ecoSelRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
-                  <Line type="linear" dataKey="ratio" stroke="#0d9488" strokeWidth={2.5} dot={ecoDot} connectNulls isAnimationActive={false} />
+                  <Line type="linear" dataKey="ratio" stroke="#059669" strokeWidth={2.5} dot={ecoDot} connectNulls isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer></div>
               {ecoSelRow && (
@@ -2193,7 +2199,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                 <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
                 <Tooltip formatter={(v) => [v + " m/Schlag", "Ökonomie"]} {...tipTop(dark)} />
-                <Line type="linear" dataKey="ef" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
+                <Line type="linear" dataKey="ef" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
               </LineChart>
             </ResponsiveContainer></div>
           ) : <div className="py-6 text-center text-xs text-slate-400">{efByType.length >= 2 ? "Zu wenig Daten für diese Auswahl." : "Braucht mind. 2 ruhige Läufe (Easy/Lang/Tempo) mit Herzfrequenz aus dem Import."}</div>}
@@ -2291,10 +2297,10 @@ function TypeProgressCharts({ series, target, hrTarget }) {
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
               <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
-              {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+              {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#10b981" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
               {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
               <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={selDot("#e11d48")} connectNulls isAnimationActive={false} />
-              {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+              {band && band.lo && <ReferenceLine y={band.hi} stroke="#10b981" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#059669", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
               {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
             </LineChart>
           </ResponsiveContainer></div>
@@ -2535,7 +2541,7 @@ function RunProgress({ data, setData, currentWeek }) {
         </div>
         <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { handleCsv(e.target.files?.[0]); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} className="mt-2.5 w-full rounded-xl border-2 border-dashed border-indigo-300 bg-white/60 py-2.5 text-sm font-semibold text-indigo-700 flex items-center justify-center gap-1.5"><Upload size={15} /> CSV-Datei auswählen</button>
-        {importMsg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${importMsg.ok ? "bg-teal-100 text-teal-800" : "bg-rose-100 text-rose-700"}`}>{importMsg.text}</div>}
+        {importMsg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${importMsg.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700"}`}>{importMsg.text}</div>}
       </Card>
 
       {/* Vorschau eines erkannten Einzellaufs (Rundenexport ohne Datum) */}
@@ -2558,8 +2564,8 @@ function RunProgress({ data, setData, currentWeek }) {
           <div className="mt-2 flex flex-wrap gap-1.5">
             {pending.hrAvg && <MiniBadge icon={<HeartPulse size={11} />} text={`Ø ${pending.hrAvg} bpm`} color="#e11d48" />}
             {pending.hrMax && <MiniBadge text={`Max ${pending.hrMax} bpm`} color="#e11d48" />}
-            {pending.cadence && <MiniBadge text={`${pending.cadence} spm`} color="#0d9488" />}
-            {pending.strideLen && <MiniBadge text={`${pending.strideLen} m Schritt`} color="#0d9488" />}
+            {pending.cadence && <MiniBadge text={`${pending.cadence} spm`} color="#059669" />}
+            {pending.strideLen && <MiniBadge text={`${pending.strideLen} m Schritt`} color="#059669" />}
             {pending.elevGain != null && pending.elevGain > 0 && <MiniBadge icon={<Mountain size={11} />} text={`+${pending.elevGain} m`} color="#78350f" />}
             {pending.calories && <MiniBadge text={`${pending.calories} kcal`} color="#7c3aed" />}
             {pending.laps?.length > 1 && <MiniBadge text={`${pending.laps.length} Runden`} color="#4338ca" />}
@@ -2656,7 +2662,7 @@ function RunProgress({ data, setData, currentWeek }) {
             {hasBadges && !isOpen && (
               <div className="flex flex-wrap gap-1.5 px-4 pb-2 -mt-1">
                 {dispHr && <MiniBadge icon={<HeartPulse size={10} />} text={`Ø ${dispHr} bpm`} color="#e11d48" />}
-                {dispCadence && <MiniBadge text={`${dispCadence} spm`} color="#0d9488" />}
+                {dispCadence && <MiniBadge text={`${dispCadence} spm`} color="#059669" />}
                 {r.elevGain != null && r.elevGain > 0 && <MiniBadge icon={<Mountain size={10} />} text={`+${r.elevGain} m`} color="#78350f" />}
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
@@ -2695,9 +2701,9 @@ function StrengthProgress({ data, setData }) {
   const list = [...data.strengthLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   return (
     <div className="space-y-4">
-      <Card className="p-4" style={panel(dark, "#059669", "#ecfdf5", "#a7f3d0")}>
-        <div className="flex items-start gap-2"><Info size={15} className="text-emerald-500 mt-0.5 shrink-0" /><p className="text-xs text-emerald-900 leading-relaxed"><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
-        <div className="mt-2.5 flex flex-wrap gap-1.5">{BASELINE.map((b) => <button key={b} onClick={() => setForm({ ...form, exercise: b.replace(/\s*\(.*\)/, "") })} className="rounded-full bg-white border border-emerald-200 px-2.5 py-1 text-[11px] font-medium text-emerald-700">{b}</button>)}</div>
+      <Card className="p-4" style={panel(dark, "#0d9488", "#f0fdfa", "#99f6e4")}>
+        <div className="flex items-start gap-2"><Info size={15} className="text-teal-500 mt-0.5 shrink-0" /><p className="text-xs text-teal-900 leading-relaxed"><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
+        <div className="mt-2.5 flex flex-wrap gap-1.5">{BASELINE.map((b) => <button key={b} onClick={() => setForm({ ...form, exercise: b.replace(/\s*\(.*\)/, "") })} className="rounded-full bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-medium text-teal-700">{b}</button>)}</div>
       </Card>
       <Card className="p-4"><Eyebrow>Satz eintragen</Eyebrow>
         <div className="mt-3 grid grid-cols-2 gap-2.5">
@@ -2708,7 +2714,7 @@ function StrengthProgress({ data, setData }) {
           <input inputMode="numeric" placeholder="Wdh." value={form.reps} onChange={(e) => setForm({ ...form, reps: e.target.value })} className="tc-input font-num" />
           <input inputMode="numeric" placeholder="Sätze" value={form.sets} onChange={(e) => setForm({ ...form, sets: e.target.value })} className="tc-input font-num col-span-2" />
         </div>
-        <button onClick={add} className="mt-3 w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
+        <button onClick={add} className="mt-3 w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
       {Object.keys(strengthPbs).length > 0 && (
         <Card className="p-4">
@@ -2739,7 +2745,7 @@ function StrengthProgress({ data, setData }) {
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
               <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipTop(dark)} />
-              <Line type="linear" dataKey="weight" stroke="#059669" strokeWidth={2.5} dot={{ r: 3, fill: "#059669" }} />
+              <Line type="linear" dataKey="weight" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
             </LineChart>
           </ResponsiveContainer></div>
         ) : <div className="py-8 text-center text-xs text-slate-400">{fullSeries.length >= 2 ? "Zu wenig Einträge in diesem Zeitraum." : "Mind. 2 Einträge dieser Übung für den Verlauf."}</div>}
@@ -2803,13 +2809,13 @@ function SyncCard({ data, setData, savedAt, onRefresh, refreshing }) {
         <button onClick={doExport} className="flex-1 rounded-xl bg-indigo-600 text-white py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Download size={13} /> Exportieren</button>
         <button onClick={() => setOpen((o) => !o)} className="flex-1 rounded-xl bg-slate-100 text-slate-700 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Upload size={13} /> Importieren</button>
       </div>
-      {msg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${msg.ok ? "bg-teal-100 text-teal-800" : "bg-rose-100 text-rose-700"}`}>{msg.text}</div>}
+      {msg && <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-[11px] leading-relaxed ${msg.ok ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-700"}`}>{msg.text}</div>}
       {open && (
         <div className="mt-3 space-y-2">
           <input ref={fileRef} type="file" accept=".json,application/json" className="hidden" onChange={(e) => { handleFile(e.target.files?.[0]); e.target.value = ""; }} />
           <button onClick={() => fileRef.current?.click()} className="w-full rounded-xl border-2 border-dashed border-slate-300 py-2.5 text-xs font-semibold text-slate-600 flex items-center justify-center gap-1.5"><Upload size={13} /> Sicherungsdatei wählen</button>
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="…oder Sicherungstext hier einfügen (vom anderen Gerät kopiert)" className="tc-input font-num" style={{ fontSize: 11 }} />
-          <button onClick={doImportText} className="w-full rounded-xl bg-teal-600 text-white py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Copy size={13} /> Text übernehmen</button>
+          <button onClick={doImportText} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"><Copy size={13} /> Text übernehmen</button>
         </div>
       )}
     </Card>
@@ -2861,7 +2867,7 @@ function IllnessLogCard({ data, setData, triggerUndo }) {
                 <div className="text-sm font-semibold text-slate-800 font-num">{fmtISOshort(e.start)} – {e.end ? fmtISOshort(e.end) : "offen"}</div>
                 <div className="text-xs text-slate-500 mt-0.5">{e.note || "Krankheit"}{!e.end && <span className="font-semibold text-rose-600"> · noch krank</span>}</div>
               </div>
-              {!e.end && <button onClick={() => endNow(e.id)} className="shrink-0 rounded-lg bg-teal-600 text-white px-2.5 py-1.5 text-[11px] font-semibold">Beenden</button>}
+              {!e.end && <button onClick={() => endNow(e.id)} className="shrink-0 rounded-lg bg-emerald-600 text-white px-2.5 py-1.5 text-[11px] font-semibold">Beenden</button>}
               <button onClick={() => remove(e.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
             </div>
           ))}
@@ -3006,7 +3012,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
             <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input" />
             <input inputMode="decimal" placeholder="Schlaf (h)" value={form.sleep} onChange={(e) => setForm({ ...form, sleep: e.target.value })} className="tc-input font-num" />
           </div>
-          <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Wie fühlst du dich? (1 müde – 5 top)</div><Scale value={form.readiness} onChange={(v) => setForm({ ...form, readiness: v })} color="#0d9488" /></div>
+          <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Wie fühlst du dich? (1 müde – 5 top)</div><Scale value={form.readiness} onChange={(v) => setForm({ ...form, readiness: v })} color="#059669" /></div>
           <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Muskelkater (1 keiner – 5 stark)</div><Scale value={form.soreness} onChange={(v) => setForm({ ...form, soreness: v })} color="#f59e0b" /></div>
           <div>
             <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Nap (optional, Minuten)</div>
@@ -3031,15 +3037,15 @@ function RecoveryTab({ data, setData, currentWeek }) {
             </div>
           )}
           <input placeholder="Notiz (optional)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input" />
-          <button onClick={save} className="w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Check-in speichern</button>
+          <button onClick={save} className="w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Check-in speichern</button>
         </div>
       </Card>
 
       <IllnessLogCard data={data} setData={setData} triggerUndo={triggerUndo} />
 
-      <Card className="p-4" style={panel(dark, "#14b8a6", "#f0fdfa", "#99f6e4")}>
-        <div className="flex items-start gap-2"><Moon size={16} className="text-teal-600 mt-0.5 shrink-0" />
-          <div className="text-xs text-teal-900 leading-relaxed">
+      <Card className="p-4" style={panel(dark, "#10b981", "#ecfdf5", "#a7f3d0")}>
+        <div className="flex items-start gap-2"><Moon size={16} className="text-emerald-600 mt-0.5 shrink-0" />
+          <div className="text-xs text-emerald-900 leading-relaxed">
             <b>Schlaf-Fokus.</b> Aktuell schläfst du oft unter 6 h — das ist dein größter Bremsklotz bei viel Training. Mit 3 Sportarten braucht dein Körper 8–9 h, sonst leiden Anpassung, Sprungkraft und Verletzungsrisiko. <b>Wenig geschlafen?</b> Streiche zuerst die optionale Krafteinheit und halte die harten Läufe locker — eher als sie hart durchzuziehen.
           </div>
         </div>
@@ -3054,8 +3060,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
               <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipTop(dark)} />
-              <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, chipSide(sleepSeries.map((p) => p.sleep), 8, 10, "below"))} />
-              <Line type="linear" dataKey="sleep" stroke="#14b8a6" strokeWidth={2.5} dot={{ r: 3, fill: "#14b8a6" }} />
+              <ReferenceLine y={8} stroke="#10b981" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#059669", dark, chipSide(sleepSeries.map((p) => p.sleep), 8, 10, "below"))} />
+              <Line type="linear" dataKey="sleep" stroke="#10b981" strokeWidth={2.5} dot={{ r: 3, fill: "#10b981" }} />
             </LineChart>
           </ResponsiveContainer></div>
         ) : <div className="py-8 text-center text-xs text-slate-400">{sorted.length >= 2 ? "Zu wenig Check-ins in diesem Zeitraum." : "Mind. 2 Check-ins für den Verlauf."}</div>}
@@ -3071,8 +3077,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
             <XAxis dataKey="day" tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
             <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={30} allowDecimals={false} />
             <Tooltip formatter={(v) => [v + " h", "Schlaf"]} {...tipTop(dark)} />
-            <ReferenceLine y={8} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#0d9488", dark, "above")} />
-            <Bar dataKey="sleep" fill="#14b8a6" maxBarSize={26} radius={[3, 3, 0, 0]}>
+            <ReferenceLine y={8} stroke="#10b981" strokeDasharray="4 4" label={chipLabel("Ziel 8 h", "#059669", dark, "above")} />
+            <Bar dataKey="sleep" fill="#10b981" maxBarSize={26} radius={[3, 3, 0, 0]}>
               {weekSleep.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}
             </Bar>
           </BarChart>
@@ -3263,7 +3269,7 @@ function NutritionTab({ data, setData, plan }) {
   if (!nut.setup || !kplan) return (
     <div className="space-y-4">
       <Card className="p-4">
-        <Eyebrow color="#0d9488">Ernährung einrichten</Eyebrow>
+        <Eyebrow color="#059669">Ernährung einrichten</Eyebrow>
         <p className="text-xs text-slate-500 leading-relaxed mt-1.5">Nur Kalorien, kein Lebensmittel-Tracking: Du schätzt kcal pro Mahlzeit, die App rechnet Ziel, Training und Trend. <b>Konsistent grob schlägt selten genau</b> — Schätzwerte reichen völlig.</p>
       </Card>
       <Card className="p-4"><NutritionProfileForm initial={nut.profile} onSave={saveProfile} submitLabel="Plan berechnen & starten" /></Card>
@@ -3275,7 +3281,7 @@ function NutritionTab({ data, setData, plan }) {
   const targetToday = targetOn(t);
   const rest = targetToday - ts.inn;
   const pct = targetToday ? ts.inn / targetToday : 0;
-  const barColor = pct > 1.07 ? "#d97706" : pct >= 0.9 ? "#0d9488" : "#6366f1";
+  const barColor = pct > 1.07 ? "#d97706" : pct >= 0.9 ? "#059669" : "#6366f1";
   const todayKey = DAYS[(new Date().getDay() + 6) % 7];
   const todayLoad = plan.find((dd) => dd.day === todayKey)?.load || 0;
 
@@ -3382,7 +3388,7 @@ function NutritionTab({ data, setData, plan }) {
             <button onClick={addPer100gPreset} className="rounded-lg bg-slate-700 text-white px-2.5 py-1.5 text-[11px] font-semibold shrink-0">+ pro 100g</button>
           </div>
         )}
-        {entry.kind === "in" && <div className="mt-2 flex flex-wrap gap-1.5">{MEAL_TAGS.map((tg) => <button key={tg} onClick={() => setEntry({ ...entry, tag: entry.tag === tg ? "" : tg })} className={`rounded-full px-2.5 py-1 text-[10.5px] font-semibold border ${entry.tag === tg ? "bg-teal-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{tg}</button>)}</div>}
+        {entry.kind === "in" && <div className="mt-2 flex flex-wrap gap-1.5">{MEAL_TAGS.map((tg) => <button key={tg} onClick={() => setEntry({ ...entry, tag: entry.tag === tg ? "" : tg })} className={`rounded-full px-2.5 py-1 text-[10.5px] font-semibold border ${entry.tag === tg ? "bg-emerald-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{tg}</button>)}</div>}
         <div className="mt-2 grid grid-cols-3 gap-2">
           <input type="date" value={entry.date} onChange={(e) => setEntry({ ...entry, date: e.target.value })} className="tc-input font-num" />
           {entry.per100g != null ? (
@@ -3399,7 +3405,7 @@ function NutritionTab({ data, setData, plan }) {
           </div>
         )}
         {entry.per100g == null && <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-500"><input type="checkbox" checked={entry.savePreset} onChange={(e) => setEntry({ ...entry, savePreset: e.target.checked })} /> Als Schnellwahl speichern (z. B. „Schulmensa“)</label>}
-        <button onClick={addEntry} className="mt-2.5 w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
+        <button onClick={addEntry} className="mt-2.5 w-full rounded-xl bg-emerald-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
         {dayEntries.length > 0 && (
           <div className="mt-3 divide-y divide-slate-100 border-t border-slate-200/70">
             {dayEntries.map((e) => (
@@ -3428,7 +3434,7 @@ function NutritionTab({ data, setData, plan }) {
         <div className="mt-2 flex gap-2.5">
           <Stat label="Streak" value={streakN} unit="Tage" accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
           <Stat label="Ø 7 Tage" value={avg7 || "—"} unit={avg7 ? "kcal" : ""} accent="#6366f1" icon={<Utensils size={13} className="text-indigo-500" />} />
-          <Stat label="Im Ziel (7T)" value={`${hit7}/7`} accent="#0d9488" icon={<Check size={13} className="text-teal-600" />} />
+          <Stat label="Im Ziel (7T)" value={`${hit7}/7`} accent="#059669" icon={<Check size={13} className="text-emerald-600" />} />
         </div>
         <div className="mt-2 text-[10.5px] text-slate-500 font-num">Wochenbudget (Mo–So): {weekBudget >= 0 ? `noch ${weekBudget} kcal frei` : `${-weekBudget} kcal über Budget`}</div>
         <div className="mt-2"><InfoToggle label="Wie zählt das Training?">Kalorien deiner Garmin-Läufe fließen am jeweiligen Tag automatisch als Verbrauch ein; Volleyball/Kraft kannst du oben als „Verbraucht“ schätzen. Angerechnet werden {parseNum(nut.profile.addBack)} % davon (im Profil änderbar) — 50 % ist der bewährte Mittelweg, weil Uhren-Kalorien oft zu hoch schätzen.</InfoToggle></div>
@@ -3436,7 +3442,7 @@ function NutritionTab({ data, setData, plan }) {
 
       <Card className="p-4">
         <div className="flex items-baseline justify-between gap-1.5 flex-wrap">
-          <Eyebrow color="#0d9488">Gewicht</Eyebrow>
+          <Eyebrow color="#059669">Gewicht</Eyebrow>
           <div className="flex items-center gap-1.5">
             {wTrend != null && <span className="text-[10.5px] font-num text-slate-500">{wTrend > 0 ? "+" : ""}{wTrend} kg/Woche (Trend)</span>}
             <TimeRangeSelect value={weightRange} onChange={setWeightRange} />
@@ -3444,7 +3450,7 @@ function NutritionTab({ data, setData, plan }) {
         </div>
         <div className="mt-2 flex gap-2">
           <input inputMode="decimal" placeholder="heute (kg)" value={wInput} onChange={(e) => setWInput(e.target.value)} className="tc-input font-num" />
-          <button onClick={addWeight} className="h-11 w-11 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
+          <button onClick={addWeight} className="h-11 w-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0"><Plus size={16} /></button>
         </div>
         {wChart.length >= 2 ? (
           <div style={{ width: "100%", height: 140 }} className="mt-2"><ResponsiveContainer>
@@ -3453,9 +3459,9 @@ function NutritionTab({ data, setData, plan }) {
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
               <Tooltip formatter={(v, name) => [v + " kg", name === "ma" ? "7-Tage-Schnitt" : "Wiegung"]} {...tipTop(dark)} />
-              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#0d9488" strokeDasharray="4 4" label={chipLabel("Ziel", "#0d9488", dark, chipSide(wChart.map((p) => p.kg), parseNum(nut.profile.goalWeight), Math.max(...wChart.map((p) => p.kg)) - Math.min(...wChart.map((p) => p.kg)) + 2, "below"))} />}
+              {parseNum(nut.profile.goalWeight) > 0 && <ReferenceLine y={parseNum(nut.profile.goalWeight)} stroke="#059669" strokeDasharray="4 4" label={chipLabel("Ziel", "#059669", dark, chipSide(wChart.map((p) => p.kg), parseNum(nut.profile.goalWeight), Math.max(...wChart.map((p) => p.kg)) - Math.min(...wChart.map((p) => p.kg)) + 2, "below"))} />}
               <Line type="linear" dataKey="kg" stroke={dark ? "#818cf8" : "#a5b4fc"} strokeWidth={1} dot={{ r: 2 }} />
-              <Line type="linear" dataKey="ma" stroke="#0d9488" strokeWidth={2.5} dot={false} />
+              <Line type="linear" dataKey="ma" stroke="#059669" strokeWidth={2.5} dot={false} />
             </LineChart>
           </ResponsiveContainer></div>
         ) : <div className="py-4 text-center text-xs text-slate-400 mt-1">{wMa.length >= 2 ? "Zu wenig Wiegungen in diesem Zeitraum." : "Ab 2 Wiegungen erscheint hier dein Verlauf mit 7-Tage-Schnitt — die Tageszahl schwankt, der Schnitt zählt."}</div>}
@@ -3471,7 +3477,7 @@ function NutritionTab({ data, setData, plan }) {
             <div className="mt-1.5 flex items-baseline gap-2"><span className="font-num text-2xl font-bold text-slate-900">{reality.est}</span><span className="text-[11px] text-slate-500">kcal/Tag tatsächlich verbraucht</span></div>
             <div className="text-[10.5px] text-slate-500 mt-1 font-num leading-relaxed">Aus Ø {reality.avgIn} kcal gegessen und {reality.dKg > 0 ? "+" : ""}{reality.dKg} kg über {reality.span} Tage ({reality.days} Log-Tage). Formel-Annahme aktuell: {kplan.tdee} kcal.</div>
             {Math.abs(reality.est - kplan.tdee) < 80
-              ? <div className="text-[10.5px] text-teal-700 mt-1.5">Passt — deine Formel-Annahme trifft die Realität, nichts anzupassen.</div>
+              ? <div className="text-[10.5px] text-emerald-700 mt-1.5">Passt — deine Formel-Annahme trifft die Realität, nichts anzupassen.</div>
               : <button onClick={applyTdee} className="mt-2 w-full rounded-xl bg-violet-600 text-white py-2.5 text-xs font-semibold">Als Verbrauch übernehmen → neues Tagesziel</button>}
           </>
         ) : (
@@ -3697,7 +3703,7 @@ function SchoolTab({ data, setData }) {
             const klausurEdge = item.art === "klausur" && !item.erledigt && item.id !== editingId ? { borderLeft: `3px solid ${dark ? "#fb7185" : KLAUSUR_COLOR}` } : {};
             return (
               <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={{ ...base, ...klausurEdge }}>
-                <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#0d9488" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#0d9488" : "transparent" }}>
+                <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#059669" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#059669" : "transparent" }}>
                   {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
                 </button>
                 <div className="min-w-0 flex-1">
@@ -3898,7 +3904,7 @@ function CalendarTab({ data }) {
   return (
     <div className="space-y-4">
       <Card className="p-3 space-y-2.5">
-        <div className="flex gap-1 rounded-2xl bg-slate-100 p-1">
+        <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
           {CAL_VIEWS.map(([v, l]) => (
             <button key={v} onClick={() => setView(v)} className={`flex-1 rounded-xl py-2 text-xs font-bold transition ${view === v ? "bg-white shadow-sm text-indigo-700" : "text-slate-500"}`}>{l}</button>
           ))}
@@ -4040,9 +4046,9 @@ export default function App() {
     <ThemeContext.Provider value={dark}>
     <div className={`min-h-screen tc-app bg-slate-50 ${dark ? "tc-dark" : ""}`} style={{ fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
         .font-display{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;}
-        .font-num{font-family:'JetBrains Mono',ui-monospace,monospace;font-feature-settings:'tnum';}
+        .font-num{font-family:'Space Grotesk',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
         .tc-input{width:100%;border:1px solid #e2e8f0;border-radius:.75rem;padding:.55rem .75rem;font-size:16px;color:#0f172a;background:#fff;}
         .tc-input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15);}
         @media (prefers-reduced-motion: reduce){*{transition:none!important;}}
@@ -4069,14 +4075,14 @@ export default function App() {
         .tc-dark .bg-white\\/70{background-color:rgba(20,29,44,.75)!important;}
         .tc-dark .bg-slate-100{background-color:#1d2839!important;}
         .tc-dark .bg-indigo-50{background-color:rgba(99,102,241,.16)!important;}
-        .tc-dark .bg-teal-100{background-color:rgba(13,148,136,.22)!important;}
+        .tc-dark .bg-emerald-100{background-color:rgba(5,150,105,.22)!important;}
         .tc-dark .bg-rose-100{background-color:rgba(225,29,72,.2)!important;}
         .tc-dark .bg-amber-100{background-color:rgba(245,158,11,.22)!important;}
         .tc-dark .border-slate-200, .tc-dark .border-slate-200\\/80, .tc-dark .border-slate-200\\/70{border-color:#26334a!important;}
         .tc-dark .border-slate-300{border-color:#31405c!important;}
         .tc-dark .border-indigo-300{border-color:rgba(99,102,241,.55)!important;}
         .tc-dark .border-amber-300{border-color:rgba(245,158,11,.55)!important;}
-        .tc-dark .border-emerald-200{border-color:rgba(5,150,105,.5)!important;}
+        .tc-dark .border-teal-200{border-color:rgba(13,148,136,.5)!important;}
         .tc-dark .border-rose-200{border-color:rgba(225,29,72,.5)!important;}
         .tc-dark .divide-slate-100>:not([hidden])~:not([hidden]){border-color:#26334a!important;}
         .tc-dark .text-slate-900{color:#f1f5f9!important;}
@@ -4088,20 +4094,20 @@ export default function App() {
         .tc-dark .text-indigo-700{color:#a5b4fc!important;}
         .tc-dark .text-indigo-600{color:#818cf8!important;}
         .tc-dark .text-indigo-500{color:#818cf8!important;}
-        .tc-dark .text-teal-900{color:#99f6e4!important;}
-        .tc-dark .text-teal-800{color:#5eead4!important;}
-        .tc-dark .text-teal-700{color:#2dd4bf!important;}
+        .tc-dark .text-emerald-900{color:#a7f3d0!important;}
+        .tc-dark .text-emerald-800{color:#6ee7b7!important;}
+        .tc-dark .text-emerald-700{color:#34d399!important;}
         .tc-dark .text-amber-900{color:#fde68a!important;}
         .tc-dark .text-amber-800\\/80{color:rgba(252,211,77,.85)!important;}
         .tc-dark .text-amber-700{color:#fbbf24!important;}
-        .tc-dark .text-emerald-900{color:#a7f3d0!important;}
-        .tc-dark .text-emerald-700{color:#34d399!important;}
-        .tc-dark .text-emerald-500{color:#34d399!important;}
+        .tc-dark .text-teal-900{color:#99f6e4!important;}
+        .tc-dark .text-teal-700{color:#2dd4bf!important;}
+        .tc-dark .text-teal-500{color:#2dd4bf!important;}
         .tc-dark .text-rose-600{color:#fb7185!important;}
         .tc-dark .text-rose-700{color:#fda4af!important;}
         .tc-dark .text-amber-500{color:#fbbf24!important;}
         .tc-dark .text-amber-600{color:#fbbf24!important;}
-        .tc-dark .text-teal-600{color:#5eead4!important;}
+        .tc-dark .text-emerald-600{color:#6ee7b7!important;}
         .tc-dark .text-indigo-400{color:#a5b4fc!important;}
         .tc-dark .text-violet-500{color:#c4b5fd!important;}
         .tc-dark .shadow-sm{box-shadow:0 0 0 1px rgba(255,255,255,.03)!important;}
@@ -4181,7 +4187,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.5` : "Fortschritt wird automatisch gespeichert · v7.5"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.6` : "Fortschritt wird automatisch gespeichert · v7.6"}</span>
           </footer>
         </main>
       </div>
