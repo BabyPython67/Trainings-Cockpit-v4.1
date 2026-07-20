@@ -19,7 +19,9 @@ const problems = [];
 async function checkSvgClipping(page, label) {
   const clipped = await page.evaluate(() => {
     const out = [];
-    document.querySelectorAll(".rounded-2xl svg text, svg.recharts-surface text").forEach((t) => {
+    // Nicht an die Radius-Klasse koppeln (die ändert sich mit dem Design-System, s. v7.6) —
+    // stattdessen jeden SVG-Text auf der Seite prüfen, nicht nur den in Karten mit einer bestimmten Rundung.
+    document.querySelectorAll("svg text").forEach((t) => {
       const svg = t.closest("svg"); if (!svg) return;
       const tb = t.getBoundingClientRect(), sb = svg.getBoundingClientRect();
       if (tb.width === 0) return;
@@ -34,6 +36,11 @@ async function checkSvgClipping(page, label) {
 async function runTheme(theme) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, colorScheme: theme === "dark" ? "dark" : "light" });
   const page = await ctx.newPage();
+  // Uhr auf ein festes Datum in Plan-Woche 3 einfrieren (SEED hat den Ausfall-Override auf w3-Fr-vb) —
+  // sonst driftet der Test still weg, sobald das echte Datum aus Woche 3 herausläuft (genau passiert
+  // beim v7.6-Refresh: Plan-Start 29.06.2026, "heute" war beim Schreiben der Fixture Woche 3, ist es
+  // im echten Kalender längst nicht mehr). Immer VOR dem ersten goto() installieren.
+  await page.clock.install({ time: new Date("2026-07-15T09:00:00") });
   const errors = [];
   page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
   page.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errors.push("console: " + m.text()); }); // Fonts-CDN ist in der Sandbox blockiert — kein App-Fehler
@@ -50,7 +57,9 @@ async function runTheme(theme) {
   // Woche: Ausfall-Zustand + Panel aufklappen
   await page.getByRole("button", { name: "Woche", exact: true }).click();
   await page.waitForTimeout(300);
-  const cancelledRow = page.locator("div.rounded-2xl", { hasText: "Ausgefallen" }).first();
+  // Nicht an die Radius-Klasse koppeln (die ändert sich mit dem Design-System, s. v7.6) —
+  // stattdessen an die stabilen strukturellen Klassen der SessionRow-Karte.
+  const cancelledRow = page.locator("div.border.shadow-sm", { hasText: "Ausgefallen" }).first();
   await cancelledRow.locator("button").last().click().catch(() => problems.push(theme + ": Ausfall-Zeile nicht aufklappbar"));
   await shot("02-woche-ausfall");
 

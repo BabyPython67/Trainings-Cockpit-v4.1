@@ -69,3 +69,18 @@ Tool fixen → verifizieren → hier dokumentieren → nicht wiederholen).
   „Maximale Herzfrequenz" pro Runde (nicht nur der Gesamt-Durchschnitt). Vor der Annahme „diese Daten
   gibt es nicht" immer eine echte Beispiel-CSV ansehen (`tools/fixtures/`), nicht nur den Code, der sie
   aktuell parst — der Code parst oft weniger, als die Datei hergibt.
+- **`verify-app.mjs`-Selektoren nie an Präsentations-Klassen koppeln** (v7.6-Fund): der Ausfall-Zeilen-Test
+  suchte `div.rounded-2xl` mit Text „Ausgefallen" — als der Radius-Token-Umbau `Card`/`SessionRow` auf
+  `rounded-xl` umstellte, fand der Test plötzlich nichts mehr, obwohl die App fehlerfrei war. Selektoren
+  auf strukturell stabile Klassen (`border`, `shadow-sm`) oder Text/Rolle stützen, nie auf Klassen, die
+  ein Design-Refresh als Erstes ändert. Dieselbe Lehre traf den SVG-Clipping-Check (`checkSvgClipping`
+  scannte nur `.rounded-2xl svg text` statt aller `svg text`) — nach jedem Radius-/Klassen-Umbau aktiv
+  nach weiteren Selektoren derselben Fehlerklasse suchen, nicht nur den zuerst gemeldeten fixen.
+- **`verify-app.mjs` lief bisher auf echter Wall-Clock-Zeit** — der Ausfall-Override in `seed.mjs` ist an
+  Plan-Woche 3 gebunden (`w3-Fr-vb`), also indirekt an ein festes Kalenderdatum relativ zu `PLAN_START`.
+  Sobald das echte Datum aus Woche 3 herausläuft, zeigt die App standardmäßig eine andere Woche und der
+  Test findet die erwartete Zeile nicht mehr — ein stiller Drift-Bug, der irgendwann in der Zukunft ohne
+  jede Code-Änderung wieder auftaucht. Fix: `page.clock.install({ time: new Date("2026-07-15T09:00:00") })`
+  vor jedem `goto()`, friert „heute" auf einen Tag in Woche 3 ein. Bei künftigen Änderungen an `seed.mjs`
+  (neue wochenabhängige Fixtures) immer prüfen, ob die eingefrorene Uhrzeit noch zur erwarteten Plan-Woche
+  passt.

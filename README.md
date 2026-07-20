@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.5
+# Trainings-Cockpit v7.6
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -61,9 +61,13 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Abzeichen-Redesign nach Rang-Vorbild** (Nutzer-Referenz: Rocket-League-Rangleiter): Fortschritt drückt sich jetzt in einer wechselnden Grundform aus (Ring → Sechseck → Stern → Diamant, je Quartil einer Stufen-Leiter) statt nur in Ringdicke/Glow/Punktzahl wie in v7.0/v7.1 — das war laut Nutzer-Feedback "zu subtil, Form/Farbe/Symbol komplett gleich". Innerhalb einer Grundform zeigen 0–2 eingesetzte, versetzt gedrehte Facetten-Umrisse zusätzliche Detailstufen. Die letzte Stufe einer Leiter (sowie einmalige Auszeichnungen ohne Leiter) bekommt zusätzlich einen Strahlenkranz.
 - v7.4 – Schlaf-Pendant zur "Diese Woche"-Bildsprache: neue Karte "Diese Woche: Schlaf" (Recovery-Tab) zeigt einen Balken pro Nacht der aktuellen Woche, heute umrandet, mit der bekannten 8h-Ziellinie — auf Nutzerwunsch, angelehnt an die "Diese Woche: Plan vs. Ist"-Karte. Bewusst kein 1:1-Nachbau: die Mehrzustands-Logik (erledigt/entschuldigt/offen/ausgefallen je Sportart) passt nicht auf Schlaf, der weder Sportart noch ein Tages-Soll hat — Tage ohne Check-in bleiben deshalb einfach eine Lücke statt eines erfundenen Zustands.
 - v7.5 – Cockpit-Tab entschlackt (Nutzer-Feedback: "diffus zu voll", elf Karten auf einer Seite ohne klare Priorität): Heute-Plan (Abhak-Liste) steht jetzt direkt nach Bereitschaft/Empfehlung statt hinter Kcal/Schule — das war bisher der Hauptgrund fürs Öffnen nach dem Sport, stand aber erst an siebter Stelle. Die vier rückblickenden Karten ohne akute Aktion (Ziel-Countdown, Stat-Zeile, Laufplan-Fortschritt, Gesamtstatistik/Abzeichen — zusammen etwa die halbe Seite) sind jetzt in einem einklappbaren „Rückblick & Fortschritt"-Bereich am Ende gebündelt, standardmäßig zu, mit einer kleinen Kennzahl in der Kopfzeile (Streak, Laufplan-%). Wochenrhythmus/Prioritäten/Kcal/Schule unverändert an ihrer Stelle. Reine Positions-/Interaktionsänderung, kein Eingriff ins Datenmodell.
+- v7.6 – Design-Tokens-Refresh, erster Schritt eines dreiteiligen Umbaus nach einem Designsystem-Handoff aus Claude Design (Farben, Radius, Typografie; Abzeichen und Navigation folgen als v7.7/v7.8):
+  - **Schärferer Radius**: Karten/Kacheln/Buttons von den bisherigen ~16px auf 12px/10px/8px (Richtung Garmin/Whoop) — neues zentrales `RADIUS`-Token statt verstreuter Tailwind-Klassen.
+  - **Kraft-Farbe wechselt auf Teal** (`#0d9488`-Familie, vorher Grün/Emerald). Da Teal in der App bereits als generelles "im Soll/gut"-Signal verbaut war (Bereitschafts-Ampel, Laufökonomie-Charts, Ziel-Linien, Bestzeit-Karte, erledigt-Häkchen), wurde dieses Signal im Gegenzug auf Grün/Emerald umgefärbt — im Kern ein Tausch der beiden Farbrollen, damit beide auf demselben Screen weiter eindeutig unterscheidbar bleiben.
+  - **`.font-num` wechselt von JetBrains Mono auf Space Grotesk** (mit `tabular-nums`) — mehr Charakter bei Statistiken, ein Font weniger im Google-Fonts-Import.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.5-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.6-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
