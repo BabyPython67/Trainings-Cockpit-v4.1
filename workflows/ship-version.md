@@ -100,3 +100,16 @@ Tool fixen → verifizieren → hier dokumentieren → nicht wiederholen).
   (Bottom-Tab-Bar) bzw. `page.locator("main")` (Seiteninhalt) scopieren statt sich auf DOM-Reihenfolge
   (`.first()`/`.last()`) zu verlassen — bei jedem künftigen Layout-Umbau, der Elemente verschiebt, kippen
   sonst genau solche Selektoren lautlos.
+- **Label und die Werte darunter/daneben müssen aus derselben berechneten Quelle kommen, nicht nur aus
+  gleich benannten Variablen** (v7.9-Fund, vom Nutzer selbst am echten Gerät entdeckt): die "Zielpace
+  aktuell (Woche {currentWeek})"-Überschrift nutzte die rohe Kalenderwoche, die Pace-Werte direkt darunter
+  aber schon `effectiveWeek(currentWeek, ...)` — bei Krankheits-Verzug (der die beiden Zahlen erst
+  auseinanderlaufen lässt) zeigte der Titel eine andere Woche als die tatsächlich angezeigten Werte. Das
+  fiel bei der Entwicklung nicht auf, weil `currentWeek` und `effectiveWeek(currentWeek)` ohne aktive
+  Krankheitswoche identisch sind — der Bug war nur mit einer echten, ≥3-Tage-Krankheitswoche in den
+  Testdaten sichtbar (`lostTrainingWeeks` zählt eine Woche erst ab 3 betroffenen Tagen als „verloren").
+  Bei jeder neuen Karte/Überschrift, die eine Wochen-/Perioden-Zahl zeigt: aktiv prüfen, ob direkt daneben
+  angezeigte Werte dieselbe Variable verwenden — nicht nur eine andere Berechnung, die zufällig meistens
+  denselben Wert ergibt. Beim Verifizieren gezielt mit einer Krankheits-Fixture testen, die lang genug ist,
+  um `lostTrainingWeeks > 0` auszulösen (die Standard-Seed-Krankheit ist bewusst nur 1 Tag und deckt das
+  NICHT ab).

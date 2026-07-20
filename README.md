@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.8
+# Trainings-Cockpit v7.9
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -67,9 +67,14 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **`.font-num` wechselt von JetBrains Mono auf Space Grotesk** (mit `tabular-nums`) — mehr Charakter bei Statistiken, ein Font weniger im Google-Fonts-Import.
 - v7.7 – Abzeichen-Neudesign, zweiter Schritt des Design-System-Umbaus: die v7.3-Formen-Eskalation (Ring→Sechseck→Stern→Diamant, eine Kategoriefarbe) weicht einer **Hexagon-Medaille nach Garmin-Vorbild** — die Metallfassung kodiert jetzt die Stufe (Bronze/Silber/Gold/Platin), eine farbige Facetten-Kachel kodiert die Kategorie, plus ein rotiertes Banderolen-Band mit der erreichten Kennzahl. Vier am Mockup konkret bemängelte Punkte wurden dabei gefixt, nicht 1:1 übernommen: das Motiv sitzt jetzt auf der echten Hexagon-Mitte (vorher zu hoch, leere Mitte); der Fassungsring ist deutlich breiter und die vier Stufen sind stärker in Helligkeit/Sättigung auseinandergezogen (vorher bei kleiner Größe kaum unterscheidbar); die Zahl auf der Banderole sitzt mittig im breitesten Hexagon-Bereich statt teilweise von der Kante verdeckt zu werden; die kleinen Zackenformen links/rechts der Banderole teilen jetzt Rotation und Gradientenrichtung mit dem Band, statt wie zwei lose Dreiecke zu wirken — die Banderole selbst blieb bewusst unverändert. Neu: eine große Detail-Ansicht (Klick auf ein Abzeichen) neben der bestehenden Kompakt-Kachel in den Leitern.
 - v7.8 – Navigations-Umbau, dritter und letzter Schritt des Design-System-Umbaus: die zweistufige Bereiche/Tabs-Navigation (Training/Kalender/Schule + fünf Unter-Tabs) weicht einer **Bottom-Tab-Bar** mit 5 Zielen — Start (Cockpit), Woche, ein erhöhter **Schnelleintrag**-Button in der Mitte, Kalender, Mehr. Die Zuordnung war bewusst dem Prinzip "häufigster Sprung bleibt direkt erreichbar, alles andere ist einen Tap entfernt in Mehr" gefolgt: Cockpit und Woche behalten ihren direkten Platz (planungs-/handlungsorientiert, passend zum v7.5-Befund, dass genau das nach dem Sport gebraucht wird), Kcal/Fortschritt/Recovery/Schule/Einstellungen wandern gebündelt nach "Mehr". Der Zahnrad-Button im Header entfällt — Einstellungen ist jetzt der letzte Eintrag in "Mehr". Neuer **Schnelleintrag**: reiner Launcher zu den längst bestehenden Formularen (kein neuer Dateneingabe-Code) — "Kraft protokollieren" öffnet z. B. direkt den Fortschritt-Tab mit vorgewähltem Kraftwerte-Unterreiter. `tools/verify-app.mjs` wurde dafür komplett neu geschrieben (die alte Navigation existiert nicht mehr).
+- v7.9 – Feedback-Runde nach dem ersten echten Testen von v7.6–v7.8: ein echter Bug gefunden + drei Abzeichen-Korrekturen.
+  - **Bugfix "Woche X" widersprach sich zwischen zwei Karten**: die "Zielpace aktuell"-Karte (Fortschritt-Tab) zeigte im Titel die rohe Kalenderwoche, berechnete die Pace-Werte darunter aber schon aus der um Krankheit bereinigten effektiven Woche — Titel und Werte liefen bei Krankheits-Verzug auseinander. Dieselbe rohe Wochenzahl stand auch in den Cockpit-Hero-Karten ("Aufbau · Woche X/Y"). Beide Stellen nutzen jetzt konsequent dieselbe effektive Wochenzahl (`effectiveWeek`). Die 🔥-Wochen-Serie bleibt bewusst unverändert bei roher Kalenderwochen-Zählung — das ist eine "bist du drangeblieben"-Serie, für die rohe Kalenderwochen die richtige Grundlage sind.
+  - **Abzeichen-Banderole jetzt waagerecht** (vorher −12° schräg gestellt) — Nutzerwunsch nach dem ersten echten Testen, Rest der Banderole (Zahl mittig, Zacken an den Rändern) unverändert.
+  - **Abzeichen-Icon überlappte das Band nicht mehr**: Icon-Position/-Größe rechnerisch so bemessen, dass die Icon-Unterkante bei jeder Medaillen-Größe (34–157px) oberhalb der Band-Oberkante bleibt.
+  - **Platin deutlich von Silber abgesetzt**: statt eines nur helleren Graus jetzt ein eisig-blauer "Diamant"-Ton (Sky-Familie, bislang ungenutzt) — liest sich in gängiger Rang-Bildsprache klar als höchste Stufe.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.8-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.9-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
