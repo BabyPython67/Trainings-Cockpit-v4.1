@@ -84,3 +84,19 @@ Tool fixen → verifizieren → hier dokumentieren → nicht wiederholen).
   vor jedem `goto()`, friert „heute" auf einen Tag in Woche 3 ein. Bei künftigen Änderungen an `seed.mjs`
   (neue wochenabhängige Fixtures) immer prüfen, ob die eingefrorene Uhrzeit noch zur erwarteten Plan-Woche
   passt.
+- **`position: fixed`-Elemente „schweben" in Playwright-`fullPage`-Screenshots scheinbar mitten auf der
+  Seite** (v7.8-Fund, gleiches Muster wie der v7.5-Sticky-Header-Fall): die neue `BottomTabBar` ist fix am
+  unteren Viewport-Rand verankert, taucht in einem `fullPage: true`-Screenshot aber nur einmal an ihrer
+  letzten sichtbaren Bildschirmposition auf, nicht am unteren Rand jeder gestitchten Sektion — reines
+  Stitching-Artefakt, kein echter Bug. Bei jedem neuen `position: fixed`-Element (Bottom-Bars, Sheets,
+  Toasts) das tatsächliche Verhalten separat mit einem Nicht-`fullPage`-Screenshot nach `scrollTo`
+  gegenprüfen (`page.locator(...).boundingBox()` nach Scroll-ans-Ende reicht meist), nicht aus dem
+  `fullPage`-Bild schließen.
+- **Nach einem Navigations-Umbau `verify-app.mjs`-Selektoren auf Mehrdeutigkeit prüfen, wenn zwei
+  gleichlautende Buttons in unterschiedlichen DOM-Bereichen existieren** (v7.8-Fund): die Bottom-Tab-Bar
+  hat einen Button „Woche", der Kalender-Ansichts-Umschalter (Monat/Woche/Tag) ebenfalls — vorher reichte
+  `.last()`, weil die alte Nav vor `<main>` im DOM stand; seit die Bottom-Tab-Bar als `<nav>` NACH `<main>`
+  liegt, kippt `.last()` auf den falschen Button. Fix: Interaktionen explizit auf `page.locator("nav")`
+  (Bottom-Tab-Bar) bzw. `page.locator("main")` (Seiteninhalt) scopieren statt sich auf DOM-Reihenfolge
+  (`.first()`/`.last()`) zu verlassen — bei jedem künftigen Layout-Umbau, der Elemente verschiebt, kippen
+  sonst genau solche Selektoren lautlos.

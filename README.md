@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.7
+# Trainings-Cockpit v7.8
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -6,7 +6,7 @@ Eigenständige Single-File-Web-App (React, im Browser, ohne Backend). Gehostet �
 
 ## Aufbau
 
-Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schule**, im Training darunter die Tabs Cockpit · Woche · Kcal · Fortschritt · Recovery. Cockpit ist die Startseite und zeigt einen Schnellblick über alles (nächste Fristen inklusive).
+Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Schnelleintrag**-Button in der Mitte (Lauf/Kraft/Kcal/Recovery-Check-in/Hausaufgabe·Klausur — navigiert direkt zum passenden Formular), **Kalender** und **Mehr** (Kcal, Fortschritt, Recovery, Schule, Einstellungen).
 
 ## Versionen
 
@@ -66,9 +66,10 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Kraft-Farbe wechselt auf Teal** (`#0d9488`-Familie, vorher Grün/Emerald). Da Teal in der App bereits als generelles "im Soll/gut"-Signal verbaut war (Bereitschafts-Ampel, Laufökonomie-Charts, Ziel-Linien, Bestzeit-Karte, erledigt-Häkchen), wurde dieses Signal im Gegenzug auf Grün/Emerald umgefärbt — im Kern ein Tausch der beiden Farbrollen, damit beide auf demselben Screen weiter eindeutig unterscheidbar bleiben.
   - **`.font-num` wechselt von JetBrains Mono auf Space Grotesk** (mit `tabular-nums`) — mehr Charakter bei Statistiken, ein Font weniger im Google-Fonts-Import.
 - v7.7 – Abzeichen-Neudesign, zweiter Schritt des Design-System-Umbaus: die v7.3-Formen-Eskalation (Ring→Sechseck→Stern→Diamant, eine Kategoriefarbe) weicht einer **Hexagon-Medaille nach Garmin-Vorbild** — die Metallfassung kodiert jetzt die Stufe (Bronze/Silber/Gold/Platin), eine farbige Facetten-Kachel kodiert die Kategorie, plus ein rotiertes Banderolen-Band mit der erreichten Kennzahl. Vier am Mockup konkret bemängelte Punkte wurden dabei gefixt, nicht 1:1 übernommen: das Motiv sitzt jetzt auf der echten Hexagon-Mitte (vorher zu hoch, leere Mitte); der Fassungsring ist deutlich breiter und die vier Stufen sind stärker in Helligkeit/Sättigung auseinandergezogen (vorher bei kleiner Größe kaum unterscheidbar); die Zahl auf der Banderole sitzt mittig im breitesten Hexagon-Bereich statt teilweise von der Kante verdeckt zu werden; die kleinen Zackenformen links/rechts der Banderole teilen jetzt Rotation und Gradientenrichtung mit dem Band, statt wie zwei lose Dreiecke zu wirken — die Banderole selbst blieb bewusst unverändert. Neu: eine große Detail-Ansicht (Klick auf ein Abzeichen) neben der bestehenden Kompakt-Kachel in den Leitern.
+- v7.8 – Navigations-Umbau, dritter und letzter Schritt des Design-System-Umbaus: die zweistufige Bereiche/Tabs-Navigation (Training/Kalender/Schule + fünf Unter-Tabs) weicht einer **Bottom-Tab-Bar** mit 5 Zielen — Start (Cockpit), Woche, ein erhöhter **Schnelleintrag**-Button in der Mitte, Kalender, Mehr. Die Zuordnung war bewusst dem Prinzip "häufigster Sprung bleibt direkt erreichbar, alles andere ist einen Tap entfernt in Mehr" gefolgt: Cockpit und Woche behalten ihren direkten Platz (planungs-/handlungsorientiert, passend zum v7.5-Befund, dass genau das nach dem Sport gebraucht wird), Kcal/Fortschritt/Recovery/Schule/Einstellungen wandern gebündelt nach "Mehr". Der Zahnrad-Button im Header entfällt — Einstellungen ist jetzt der letzte Eintrag in "Mehr". Neuer **Schnelleintrag**: reiner Launcher zu den längst bestehenden Formularen (kein neuer Dateneingabe-Code) — "Kraft protokollieren" öffnet z. B. direkt den Fortschritt-Tab mit vorgewähltem Kraftwerte-Unterreiter. `tools/verify-app.mjs` wurde dafür komplett neu geschrieben (die alte Navigation existiert nicht mehr).
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.7-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.8-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
