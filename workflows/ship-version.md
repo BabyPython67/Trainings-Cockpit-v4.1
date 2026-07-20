@@ -4,6 +4,14 @@ SOP für den kompletten Ablauf, wenn Feature-Änderungen an der App fertig sind 
 ausgeliefert werden sollen. Die zugehörigen Scripts liegen in `tools/` — vor dem Neuschreiben von
 Build-/Test-/Verify-Logik immer hier zuerst nachsehen (WAT-Prinzip: „Look for existing tools first").
 
+**Bei visuell geprägten Aufgaben (Design-System-Umbau, Mockup/Prompt aus einem externen Design-Tool
+umsetzen, offenes ästhetisches Feedback) beginnt dieser Ablauf NICHT bei Schritt 1** — davor steht eine
+eigene Sample-Iterationsschleife über ein eigenständiges HTML/CSS-Artifact (mehrere Varianten/Zustände,
+echte App-Design-Tokens, aber ohne React/Build-Pipeline), die mit dem Nutzer so lange durchgesprochen
+wird, bis das Design freigegeben ist — erst danach beginnt Schritt 1 unten. Details/Begründung in
+`claude-memory`s „Trainings-Cockpit — Projektkontext.txt", Abschnitt 1, Regel „Design-Aufgaben: erst
+Samples-Artefakt, dann Implementierung". Ein freigegebenes Muster ersetzt die Schritte unten NICHT.
+
 ## Schritte
 
 1. **Quellcode ändern**: `Trainings-Cockpit-vX.Y-Quellcode.txt` im Repo-Root bearbeiten. Bei einem
