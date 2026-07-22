@@ -449,7 +449,16 @@ function migrateDone(done) {
   });
   return { done: out, changed };
 }
-function dominantSport(items) { let best = items[0], bl = items[0]?.load ?? 0; for (const it of items) if ((it.load || 0) > bl) { best = it; bl = it.load; } return best?.sport || "rest"; }
+// v7.13-Fix: Ersetzt die alte "eine Sportart gewinnt den ganzen Balken"-Logik (dominantSport) — bei
+// exakt gleicher Last zweier Sportarten am selben Tag (z. B. eine verschobene Einheit trifft auf eine
+// bestehende) gewann zufällig die zuerst im Array stehende, die andere verschwand farblich komplett,
+// obwohl der Tooltip beide korrekt auflistete. Liefert stattdessen die Last je Sportart für gestapelte
+// Balken-Segmente (wie schon bei weekLoadBySport/den Plan-vs-Ist-Charts) — keine Sportart geht mehr unter.
+function dayLoadBySport(items) {
+  const out = { vb: 0, run: 0, strength: 0 };
+  items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; });
+  return out;
+}
 
 /* ===================== Zeit-Helfer ===================== */
 function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = String(str).trim(); if (s.includes(":")) { const p = s.split(":").map(Number); if (p.some(isNaN)) return null; if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2]; return p[0] * 60 + p[1]; } const n = Number(s.replace(",", ".")); return isNaN(n) ? null : n; }
@@ -593,10 +602,17 @@ function WeekRhythm({ plan, week, highlightToday }) {
   const monday = mondayOfWeek(week);
   // v7.0: ausgefallene Einheiten (load 0, aber originalLoad>0) sollen sich sichtbar von einem echten
   // Ruhetag unterscheiden — bisher wurden beide identisch als leere graue Säule dargestellt.
+  const STACK = ["vb", "run", "strength"]; // v7.13: je Sportart ein gestapeltes Segment statt einer "gewinnt alles"-Farbe
   const data = plan.map((d, i) => {
     const date = new Date(monday.getTime() + i * DAY_MS);
     const cancelledLoad = d.items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
-    return { day: d.day, load: d.load, cancelledLoad, barHeight: d.load || cancelledLoad, dom: dominantSport(d.items), items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
+    const cancelledOnly = d.load === 0 && cancelledLoad > 0;
+    const bySport = dayLoadBySport(d.items);
+    // v7.14-Fix: die abgerundete Oberkante gehört dem jeweils OBERSTEN Segment MIT Wert an diesem Tag —
+    // fest an "strength" (letztes Stack-Glied) zu koppeln ließ z. B. einen reinen Volleyball-Tag eckig
+    // aussehen, weil Kraft dort 0 ist und die Rundung so ins Leere lief.
+    const topSeg = cancelledOnly ? "cancelledBar" : [...STACK].reverse().find((s) => bySport[s] > 0) || null;
+    return { day: d.day, load: d.load, cancelledLoad, cancelledOnly, cancelledBar: cancelledOnly ? cancelledLoad : 0, topSeg, ...bySport, items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
   });
   const avg = Math.round((data.reduce((s, d) => s + d.load, 0) / 7) * 10) / 10;
   return (
@@ -610,33 +626,39 @@ function WeekRhythm({ plan, week, highlightToday }) {
           {...tipTop(dark)}
           wrapperStyle={{ zIndex: 40 }}
           cursor={{ fill: dark ? "#ffffff08" : "#00000006" }}
-          labelFormatter={(label, payload) => { const d = payload && payload[0] && payload[0].payload; return d ? DAY_FULL[d.day] : label; }}
-          formatter={(value, name, props) => {
-            const works = (props.payload.items || []).filter((i) => i.load > 0);
-            const cancelled = (props.payload.items || []).filter((i) => i.cancelled);
-            if (works.length) {
-              const text = works.map((i) => `${i.label} ⚡${i.load}`).join(" + ");
-              return [works.length > 1 ? `${text} · Gesamt ⚡${props.payload.load}` : text, "Plan"];
-            }
-            if (cancelled.length) return [cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + "), "Plan"];
-            return ["Ruhetag", "Plan"];
+          content={({ active, payload }) => {
+            if (!active || !payload || !payload.length) return null;
+            const d = payload[0].payload;
+            const works = (d.items || []).filter((i) => i.load > 0);
+            const cancelled = (d.items || []).filter((i) => i.cancelled);
+            let text = "Ruhetag";
+            if (works.length) { const t = works.map((i) => `${i.label} ⚡${i.load}`).join(" + "); text = works.length > 1 ? `${t} · Gesamt ⚡${d.load}` : t; }
+            else if (cancelled.length) text = cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + ");
+            return (
+              <div style={{ ...tipStyle(dark, 12), padding: "7px 10px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>
+                <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
+                <div style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>{text}</div>
+              </div>
+            );
           }}
         />
-        <Bar dataKey="barHeight" radius={[4, 4, 0, 0]} maxBarSize={26}>
-          {data.map((d, i) => {
-            const cancelledOnly = d.load === 0 && d.cancelledLoad > 0;
-            return <Cell key={i}
-              fill={cancelledOnly ? "none" : d.load === 0 ? (dark ? "#26334a" : "#e2e8f0") : SPORT[d.dom].color}
-              stroke={cancelledOnly ? (dark ? "#64748b" : "#94a3b8") : d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"}
-              strokeWidth={cancelledOnly || d.isToday ? 1.5 : 0}
-              strokeDasharray={cancelledOnly ? "3 2" : undefined} />;
-          })}
-          <LabelList dataKey="barHeight" content={({ x, y, width, index }) => {
-            const d = data[index];
-            if (d.load > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={dark ? "#94a3b8" : "#64748b"}>{`⚡${d.load}`}</text>;
-            if (d.cancelledLoad > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={8} fontWeight={600} fill={dark ? "#64748b" : "#94a3b8"}>Ausgefallen</text>;
-            return null;
-          }} />
+        {STACK.map((s, si) => (
+          <Bar key={s} dataKey={s} stackId="wr" fill={SPORT[s].color} maxBarSize={26}>
+            {data.map((d, i) => <Cell key={i} radius={d.topSeg === s ? [4, 4, 0, 0] : [0, 0, 0, 0]} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}
+            {si === STACK.length - 1 && <LabelList dataKey={s} content={({ x, y, width, index }) => {
+              const d = data[index];
+              if (d.load > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={dark ? "#94a3b8" : "#64748b"}>{`⚡${d.load}`}</text>;
+              if (d.cancelledLoad > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={8} fontWeight={600} fill={dark ? "#64748b" : "#94a3b8"}>Ausgefallen</text>;
+              return null;
+            }} />}
+          </Bar>
+        ))}
+        <Bar dataKey="cancelledBar" stackId="wr" fill="none" maxBarSize={26}>
+          {data.map((d, i) => <Cell key={i}
+            radius={d.topSeg === "cancelledBar" ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+            stroke={d.cancelledOnly ? (dark ? "#64748b" : "#94a3b8") : d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"}
+            strokeWidth={d.cancelledOnly || d.isToday ? 1.5 : 0}
+            strokeDasharray={d.cancelledOnly ? "3 2" : undefined} />)}
         </Bar>
       </BarChart>
     </ResponsiveContainer></div>
@@ -4430,7 +4452,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.13` : "Fortschritt wird automatisch gespeichert · v7.13"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.14` : "Fortschritt wird automatisch gespeichert · v7.14"}</span>
           </footer>
         </main>
       </div>
