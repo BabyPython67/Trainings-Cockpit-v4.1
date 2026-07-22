@@ -3,13 +3,25 @@
 Dieses Repo ist Teil eines Mehr-Repo-Projekts für Mirko (18, Schüler): Trainings-App für
 Volleyball/Laufen/Kraft/Schule/Kalender. Bei JEDER neuen Session, die dieses Repo betrifft:
 
-1. **Zuerst komplett lesen** (Repo `BabyPython67/claude-memory`):
-   - `Trainings-Cockpit — Projektkontext.txt` — Arbeitsweise/Standing Rules (Abschnitt 1),
-     Versionshistorie, bewusste Entscheidungen. Diese CLAUDE.md hier ersetzt das NICHT, sie ist
-     nur ein Pointer, damit das Lesen nicht bei jeder Session erneut vom Nutzer angestoßen werden muss.
-   - `Trainings-Cockpit — Plan-Status.txt` — aktueller Trainings-/Krankheitsstand (Pflicht-Pflege
-     nach jeder relevanten Änderung).
-2. **Danach dieses Repo**: `README.md` + aktuelle `Trainings-Cockpit-vX.Y-Quellcode.txt`.
+1. **Kontext aus `claude-memory` (Repo `BabyPython67/claude-memory`)**: Seit 22.07.2026 übernimmt das
+   ein SessionStart-Hook (`.claude/hooks/session-start.mjs`, registriert in `.claude/settings.json`) —
+   findet er `claude-memory` als Sibling-Ordner (`../claude-memory`), injiziert er automatisch die
+   „Kurzfassung" aus `Trainings-Cockpit — Projektkontext.txt` (Abschnitt 0) als Kontext, OHNE dass die
+   volle ~82-KB-Datei gelesen werden muss. Grund: die alte Pflicht „bei jeder Session komplett lesen"
+   kostete auch für einen Ein-Zeilen-Fix ~20k Tokens, bevor überhaupt eine Aufgabe begann.
+   - Meldet der Hook-Output, dass `claude-memory` nicht gefunden wurde (kein Sibling-Ordner vorhanden)
+     oder der Kurzfassung-Block fehlt: **wie bisher `Trainings-Cockpit — Projektkontext.txt` UND
+     `Trainings-Cockpit — Plan-Status.txt` vollständig lesen**, bevor an dieser App gearbeitet wird.
+   - Auch wenn der Hook lief: `Trainings-Cockpit — Plan-Status.txt` (aktueller Trainings-/
+     Krankheitsstand, kompakt, ~80 Zeilen) wird NICHT injiziert und bleibt bei jeder Aufgabe mit
+     Trainings-/Krankheits-/Plan-Bezug vollständig zu lesen.
+   - Der Volltext von `Projektkontext.txt` (Standing Rules mit Begründung, volle Versionshistorie,
+     Fallstricke) bleibt Nachschlagewerk für alles, was die Kurzfassung nicht beantwortet — gezielt per
+     Grep/Abschnittsnummer nachschlagen, nicht prophylaktisch komplett neu lesen.
+2. **Dieses Repo**: `README.md` immer. `Trainings-Cockpit-vX.Y-Quellcode.txt` (~4300 Zeilen) NICHT
+   pauschal komplett lesen — bei einer konkreten Änderung gezielt per Grep zum betroffenen Bereich
+   springen; einen vollständigen Durchgang nur bei einem breiten Refactoring/Audit, das ohnehin die
+   ganze Datei betrifft.
 
 ## Die wichtigsten Standing Rules auf einen Blick
 
