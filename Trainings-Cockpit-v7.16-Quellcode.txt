@@ -4300,17 +4300,6 @@ export default function App() {
       return () => mq.removeEventListener?.("change", h);
     } catch (_) {}
   }, []);
-  // Automatisches tägliches Backup: einmal pro Kalendertag beim App-Start, unabhängig vom manuellen Button in SyncCard
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      const today = todayISO();
-      if (window.localStorage.getItem("lastBackupExportDate") !== today) {
-        downloadBackup(buildBackupPayload(data));
-        window.localStorage.setItem("lastBackupExportDate", today);
-      }
-    } catch (_) {}
-  }, [loaded]);
   const dark = data.theme === "dark" || (data.theme !== "light" && sysDark);
 
   const today = new Date();
@@ -4463,7 +4452,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.15` : "Fortschritt wird automatisch gespeichert · v7.15"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.16` : "Fortschritt wird automatisch gespeichert · v7.16"}</span>
           </footer>
         </main>
       </div>

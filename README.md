@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.15
+# Trainings-Cockpit v7.16
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -88,9 +88,10 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
 - v7.13 – **Einheit frei verschieben**: jede noch offene Lauf-, Kraft- oder Volleyball-Einheit lässt sich jetzt unabhängig von einem Ausfall auf einen anderen Tag derselben Woche verschieben (neuer „Verschieben"-Button in der aufgeklappten Zeile) — z. B. um bei einer ausgefallenen Volleyball-Einheit eine noch offene Einheit aus den letzten Tagen in die frei gewordene Zeit zu legen, oder für andere Sonderfälle. Die Einheit wird 1:1 kopiert (nicht neu erfunden wie bei der bestehenden Volleyball-Ausfallen-Ersatz-Funktion, die unverändert weiterläuft) — die Original-Zeile bleibt sichtbar mit „Verschoben"-Badge und zählt nirgends mehr mit. Nur offene (nicht abgehakte) Einheiten sind verschiebbar, nur innerhalb der aktuell angezeigten Plan-Woche.
 - v7.14 – Bugfix, direkt nach dem ersten echten Einsatz von v7.13 gefunden: das „Wochenrhythmus"-Chart (Cockpit-Start) zeigte einen Tag mit zwei verschiedenen Sportarten (z. B. eine per „Verschieben" hinzugekommene Lauf-Einheit neben einer bestehenden Volleyball-Einheit) komplett in nur EINER Farbe — die „kleinere" Sportart verschwand optisch völlig, obwohl der Tooltip beide korrekt auflistete. Der Balken zeigt jetzt für jede Sportart ein eigenes gestapeltes Farbsegment (wie schon bei „Diese Woche: Plan vs. Ist" und „Wochenbelastung"), sodass an einem gemischten Tag beide Sportarten sichtbar bleiben.
 - v7.15 – **Automatisches tägliches Backup**: die bestehende Backup-Export-Funktion (bisher nur über den manuellen „Exportieren"-Button in den Einstellungen) läuft jetzt zusätzlich einmal pro Kalendertag automatisch beim App-Start — sie ruft dieselbe Export-Funktion direkt auf (kein simulierter Klick). Neuer `localStorage`-Key `lastBackupExportDate` (Format `YYYY-MM-DD`) merkt sich den letzten Auto-Export-Tag; weicht das heutige Datum davon ab (oder fehlt der Key), wird exportiert und der Key aktualisiert. Der manuelle Button bleibt unverändert und jederzeit unabhängig vom Datum nutzbar.
+- v7.16 – **v7.15 zurückgebaut**: die automatische tägliche Sicherung aus v7.15 stellte sich im echten Einsatz auf dem iPhone als nicht praktikabel heraus — iOS lässt beim Download aus einer Web-App grundsätzlich nie ein lautloses Speichern zu, sondern zeigt immer das Teilen-Menü (Share Sheet) mit manueller Bestätigung. Der Auto-Trigger brachte dadurch keinen echten Automatisierungsgewinn, sondern nur ein ungefragtes Popup bei jedem App-Start. Auf Nutzerwunsch komplett entfernt (kein `lastBackupExportDate`-Key, kein Auto-Aufruf mehr) — der manuelle „Exportieren"-Button in den Einstellungen ist unverändert die einzige Sicherungs-Auslösung, wie vor v7.15.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.15-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.16-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
