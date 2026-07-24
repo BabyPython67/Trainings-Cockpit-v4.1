@@ -120,6 +120,50 @@ t("krank + Ersatz: Ersatz-Einheit erbt die Krank-Markierung des Tages", () => {
   assert.equal(ers.illness, "sick");
 });
 
+console.log("v7.17: Einheit entschuldigen (krank/körperlich nicht bereit) — eigener Status, isoliert von illnessLog");
+const excuseTargetUid = M.buildWeekPlan(W, undefined, undefined, [], "fixed", {}).flatMap((d) => d.items).find((i) => i.sport === "run" && i.load > 0).uid;
+t("entschuldigt (körperlich nicht bereit): load 0, Grund + Notiz gesetzt, KEINE illness-Markierung", () => {
+  const ov = { [excuseTargetUid]: { status: "entschuldigt", excuseType: "koerperlich_nicht_bereit", note: "Herz/Atmung nach easy Lauf schwer" } };
+  const plan = M.buildWeekPlan(W, undefined, undefined, [], "fixed", ov);
+  const it = plan.flatMap((d) => d.items).find((i) => i.uid === excuseTargetUid);
+  assert.equal(it.excused, true);
+  assert.equal(it.excuseType, "koerperlich_nicht_bereit");
+  assert.equal(it.excuseNote, "Herz/Atmung nach easy Lauf schwer");
+  assert.equal(it.load, 0);
+  assert.ok(it.originalLoad > 0);
+  assert.equal(it.illness, undefined); // bewusst NICHT an illnessLog/effectiveWeek gekoppelt
+});
+t("entschuldigt (krank, pro Einheit): unabhängig vom globalen illnessLog-Mechanismus", () => {
+  const ov = { [excuseTargetUid]: { status: "entschuldigt", excuseType: "krank" } };
+  const plan = M.buildWeekPlan(W, undefined, undefined, [], "fixed", ov);
+  const it = plan.flatMap((d) => d.items).find((i) => i.uid === excuseTargetUid);
+  assert.equal(it.excused, true);
+  assert.equal(it.excuseType, "krank");
+  assert.equal(it.excuseNote, undefined);
+});
+t("entschuldigt bricht die Wochen-Serie nicht (wie ausgefallen)", () => {
+  const ov = { [excuseTargetUid]: { status: "entschuldigt", excuseType: "koerperlich_nicht_bereit" } };
+  const items = M.buildWeekPlan(W, undefined, undefined, [], "fixed", ov).flatMap((d) => d.items).filter((i) => i.load > 0);
+  const done = {}; items.forEach((i) => (done[i.uid] = true));
+  assert.equal(M.weekFulfilled(W, done, undefined, [], "fixed", ov), true);
+});
+t("entschuldigt wirkt isoliert: andere Einheiten derselben Woche bleiben byte-identisch (kein Aufbau-Fenster-Effekt)", () => {
+  const base = M.buildWeekPlan(W, undefined, undefined, [], "fixed", {});
+  const ov = { [excuseTargetUid]: { status: "entschuldigt", excuseType: "koerperlich_nicht_bereit" } };
+  const withExcuse = M.buildWeekPlan(W, undefined, undefined, [], "fixed", ov);
+  const otherBase = base.flatMap((d) => d.items).filter((i) => i.uid !== excuseTargetUid);
+  const otherNew = withExcuse.flatMap((d) => d.items).filter((i) => i.uid !== excuseTargetUid);
+  assert.equal(JSON.stringify(otherBase), JSON.stringify(otherNew));
+});
+t("isExcusable: nur offene, noch nicht abgehakte, nicht bereits ausgefallene/verschobene/entschuldigte Einheiten mit Last", () => {
+  const open = M.buildWeekPlan(W, undefined, undefined, [], "fixed", {}).flatMap((d) => d.items).find((i) => i.load > 0);
+  assert.equal(M.isExcusable(open, { done: {} }), true);
+  assert.equal(M.isExcusable(open, { done: { [open.uid]: true } }), false);
+  assert.equal(M.isExcusable({ ...open, cancelled: true }, { done: {} }), false);
+  assert.equal(M.isExcusable({ ...open, excused: true }, { done: {} }), false);
+  assert.equal(M.isExcusable({ ...open, movedAway: true }, { done: {} }), false);
+});
+
 console.log("Regression: bestehende Logik unverändert");
 t("buildWeekPlan ohne overrides identisch zu v5.1-Aufruf", () => {
   const a = JSON.stringify(M.buildWeekPlan(3, undefined, undefined, [], "fixed"));
@@ -552,6 +596,45 @@ t("Live-Serie: hängt am durchgereichten Streak-Wert, ohne Datum", () => {
 t("Katalog: ids eindeutig, Gruppen bekannt", () => {
   assert.equal(new Set(M.BADGE_CATALOG.map((b) => b.id)).size, M.BADGE_CATALOG.length);
   assert.ok(M.BADGE_CATALOG.every((b) => M.BADGE_GROUPS[b.group]));
+});
+
+console.log("v7.17: dynamische Ränge für \"Längste Wochen-Serie\" (streak_record) — dieselben Schwellen wie live_streak 4/8/12/16");
+t("STREAK_RECORD_TIERS deckt sich mit den live_streak-Schwellen", () => {
+  const liveThresholds = M.BADGE_CATALOG.filter((b) => b.group === "streak" && b.tier === "live").map((b) => b.target);
+  assert.deepEqual(M.STREAK_RECORD_TIERS, liveThresholds);
+});
+t("unter der ersten Stufen-Schwelle (best<4): nicht erreicht — kein verfrühtes Bronze", () => {
+  const done = doneForWeeks([1, 2, 3]); // best = 3
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done }, 3, 0).find((x) => x.id === "streak_record");
+  assert.equal(b.current, 3);
+  assert.equal(b.earned, false);
+});
+t("genau an der ersten Schwelle (best=4): erreicht, Bronze (nicht mehr fix Platin)", () => {
+  const done = doneForWeeks([1, 2, 3, 4]);
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done }, 4, 0).find((x) => x.id === "streak_record");
+  assert.equal(b.earned, true);
+  assert.equal(b.rank, 0); assert.equal(b.rankTotal, 4);
+  assert.equal(M.badgeMedalTier(b.rank, b.rankTotal).tierIdx, 0);
+});
+t("zweite Schwelle (best=8): Silber", () => {
+  const done = doneForWeeks([1, 2, 3, 4, 5, 6, 7, 8]);
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done }, 8, 0).find((x) => x.id === "streak_record");
+  assert.equal(b.rank, 1);
+  assert.equal(M.badgeMedalTier(b.rank, b.rankTotal).tierIdx, 1);
+});
+t("letzte Schwelle (best=16): Platin + isPeak, wächst also weiter statt fix zu bleiben", () => {
+  const done = doneForWeeks(Array.from({ length: 16 }, (_, i) => i + 1));
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done }, 16, 0).find((x) => x.id === "streak_record");
+  assert.equal(b.rank, 3); assert.equal(b.rankTotal, 4);
+  const tier = M.badgeMedalTier(b.rank, b.rankTotal);
+  assert.equal(tier.tierIdx, 3);
+  assert.equal(tier.isPeak, true);
+});
+t("Stillliegen: Rang bleibt am historischen Rekord hängen, sinkt nicht mit einer gerissenen aktuellen Serie", () => {
+  const done = doneForWeeks([1, 2, 3, 4, 5, 6, 7, 8, 10]); // Woche 9 fehlt -> Rekord bleibt 8, aktuelle Serie danach nur 1
+  const b = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done }, 10, 0).find((x) => x.id === "streak_record");
+  assert.equal(b.current, 8);
+  assert.equal(b.rank, 1); // weiterhin Silber (Schwelle 8), nicht auf die kurze laufende Serie zurückgefallen
 });
 
 console.log("v7.7: Hexagon-Medaille — badgeMedalTier löst die v7.3-Formen-Eskalation ab");
