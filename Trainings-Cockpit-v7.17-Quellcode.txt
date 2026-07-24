@@ -393,6 +393,12 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
       const o = ov[it.uid];
       if (o && o.status === "ausgefallen") { it.cancelled = true; it.originalLoad = it.load; it.load = 0; }
       else if (o && o.status === "verschoben") { it.movedAway = true; it.movedTo = o.movedTo; it.originalLoad = it.load; it.load = 0; }
+      // v7.17: "körperlich nicht bereit" / "krank" pro Einheit — bewusst eigener Status statt "ausgefallen"
+      // (das ist VB-Ersatz-spezifisch) und bewusst NICHT über illnessLog/effectiveWeek/Aufbau-Fenster
+      // (Z.397-421) — wirkt isoliert nur auf diese eine Einheit, load 0 reicht für "nicht streak-brechend"
+      // (weekFulfilled filtert ohnehin auf load>0) und "0 Belastungspunkte", ganz ohne die globale
+      // Krankheits-Logik anzufassen.
+      else if (o && o.status === "entschuldigt") { it.excused = true; it.excuseType = o.excuseType; it.excuseNote = o.note; it.originalLoad = it.load; it.load = 0; }
     });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
@@ -432,7 +438,12 @@ function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
 // v7.13: offene, noch nicht abgehakte Original-Einheit — Ruhetage/Turnier/bereits verschobene oder
 // ausgefallene Einheiten sowie Ersatz-/Verschoben-Kopien selbst lassen sich nicht (nochmal) verschieben.
 function isMovable(it, data) {
-  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !(data.done || {})[it.uid];
+  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !(data.done || {})[it.uid];
+}
+// v7.17: analoges Gate für "Entschuldigen (krank / körperlich nicht bereit)" — jede offene, noch nicht
+// abgehakte Einheit mit Last, unabhängig von der Sportart (anders als der VB-spezifische Ausfall-Button).
+function isExcusable(it, data) {
+  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !(data.done || {})[it.uid];
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
 function migrateDone(done) {
@@ -606,13 +617,21 @@ function WeekRhythm({ plan, week, highlightToday }) {
   const data = plan.map((d, i) => {
     const date = new Date(monday.getTime() + i * DAY_MS);
     const cancelledLoad = d.items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
+    // v7.17: "körperlich nicht bereit"/"krank" pro Einheit — eigenes 0-Last-Segment, von "Ausgefallen"
+    // farblich/im Muster unterscheidbar (sonst exakt die v7.14-Fehlerklasse: neue 0-Last-Kategorie
+    // verschwindet optisch, obwohl der Tooltip sie korrekt auflisten würde).
+    const excusedItems = d.items.filter((it) => it.excused);
+    const excusedLoad = excusedItems.reduce((s, it) => s + (it.originalLoad || 0), 0);
+    const excuseTypes = new Set(excusedItems.map((it) => it.excuseType));
+    const excuseKind = excuseTypes.size === 1 ? [...excuseTypes][0] : excuseTypes.size > 1 ? "mixed" : null;
     const cancelledOnly = d.load === 0 && cancelledLoad > 0;
+    const excusedOnly = d.load === 0 && !cancelledOnly && excusedLoad > 0;
     const bySport = dayLoadBySport(d.items);
     // v7.14-Fix: die abgerundete Oberkante gehört dem jeweils OBERSTEN Segment MIT Wert an diesem Tag —
     // fest an "strength" (letztes Stack-Glied) zu koppeln ließ z. B. einen reinen Volleyball-Tag eckig
     // aussehen, weil Kraft dort 0 ist und die Rundung so ins Leere lief.
-    const topSeg = cancelledOnly ? "cancelledBar" : [...STACK].reverse().find((s) => bySport[s] > 0) || null;
-    return { day: d.day, load: d.load, cancelledLoad, cancelledOnly, cancelledBar: cancelledOnly ? cancelledLoad : 0, topSeg, ...bySport, items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
+    const topSeg = cancelledOnly ? "cancelledBar" : excusedOnly ? "excusedBar" : [...STACK].reverse().find((s) => bySport[s] > 0) || null;
+    return { day: d.day, load: d.load, cancelledLoad, cancelledOnly, cancelledBar: cancelledOnly ? cancelledLoad : 0, excusedLoad, excusedOnly, excuseKind, excusedBar: excusedOnly ? excusedLoad : 0, topSeg, ...bySport, items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
   });
   const avg = Math.round((data.reduce((s, d) => s + d.load, 0) / 7) * 10) / 10;
   return (
@@ -631,9 +650,15 @@ function WeekRhythm({ plan, week, highlightToday }) {
             const d = payload[0].payload;
             const works = (d.items || []).filter((i) => i.load > 0);
             const cancelled = (d.items || []).filter((i) => i.cancelled);
+            const excused = (d.items || []).filter((i) => i.excused);
             let text = "Ruhetag";
             if (works.length) { const t = works.map((i) => `${i.label} ⚡${i.load}`).join(" + "); text = works.length > 1 ? `${t} · Gesamt ⚡${d.load}` : t; }
-            else if (cancelled.length) text = cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + ");
+            else if (cancelled.length || excused.length) {
+              const parts = [];
+              if (cancelled.length) parts.push(cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + "));
+              if (excused.length) parts.push(excused.map((i) => `${i.label} — entschuldigt (${i.excuseType === "koerperlich_nicht_bereit" ? "körperlich nicht bereit" : "krank"})`).join(" + "));
+              text = parts.join(" + ");
+            }
             return (
               <div style={{ ...tipStyle(dark, 12), padding: "7px 10px", background: dark ? "#16202f" : "#ffffff", border: `1px solid ${dark ? "#2b3950" : "#e2e8f0"}`, borderRadius: 10 }}>
                 <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
@@ -649,6 +674,7 @@ function WeekRhythm({ plan, week, highlightToday }) {
               const d = data[index];
               if (d.load > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={600} fill={dark ? "#94a3b8" : "#64748b"}>{`⚡${d.load}`}</text>;
               if (d.cancelledLoad > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={8} fontWeight={600} fill={dark ? "#64748b" : "#94a3b8"}>Ausgefallen</text>;
+              if (d.excusedLoad > 0) return <text x={x + width / 2} y={y - 4} textAnchor="middle" fontSize={8} fontWeight={600} fill={d.excuseKind === "krank" ? "#e11d48" : d.excuseKind === "koerperlich_nicht_bereit" ? "#d97706" : (dark ? "#64748b" : "#94a3b8")}>{d.excuseKind === "krank" ? "Krank" : d.excuseKind === "koerperlich_nicht_bereit" ? "Nicht bereit" : "Entschuldigt"}</text>;
               return null;
             }} />}
           </Bar>
@@ -659,6 +685,17 @@ function WeekRhythm({ plan, week, highlightToday }) {
             stroke={d.cancelledOnly ? (dark ? "#64748b" : "#94a3b8") : d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"}
             strokeWidth={d.cancelledOnly || d.isToday ? 1.5 : 0}
             strokeDasharray={d.cancelledOnly ? "3 2" : undefined} />)}
+        </Bar>
+        {/* v7.17: eigenes, von "Ausgefallen" unterscheidbares 0-Last-Segment für "Entschuldigt (krank/körperlich nicht bereit)" — eigene Farbe je Grund statt neutralem Grau, engeres Strichmuster als "Ausgefallen" */}
+        <Bar dataKey="excusedBar" stackId="wr" fill="none" maxBarSize={26}>
+          {data.map((d, i) => {
+            const col = d.excuseKind === "krank" ? "#e11d48" : d.excuseKind === "koerperlich_nicht_bereit" ? "#d97706" : (dark ? "#64748b" : "#94a3b8");
+            return <Cell key={i}
+              radius={d.topSeg === "excusedBar" ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+              stroke={d.excusedOnly ? col : d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"}
+              strokeWidth={d.excusedOnly || d.isToday ? 1.5 : 0}
+              strokeDasharray={d.excusedOnly ? "2 2" : undefined} />;
+          })}
         </Bar>
       </BarChart>
     </ResponsiveContainer></div>
@@ -927,6 +964,8 @@ function cumulativeRunKmDate(runLog, thresholdKm) {
 // Stufen bewusst weit in die Zukunft gestaffelt (Nutzer-Wunsch: "gute Vorsorge") — ausgegraute
 // Fernziele schaden nicht, verschwundene Nahziele schon.
 const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#0d9488" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
+// v7.17: dieselben Schwellen wie live_streak_4/8/12/16 unten — hält Rekord- und Live-Serie-Abzeichen konsistent.
+const STREAK_RECORD_TIERS = [4, 8, 12, 16];
 // rank/rankTotal je Leiter: treibt die Metall-Stufe der Hexagon-Medaille (badgeMedalTier) —
 // eigenständige Abzeichen ohne Leiter (streak_record, plan_complete) bekommen rank 0/rankTotal 1, was
 // dort als "volle Ausbaustufe" (Platin) behandelt wird (einmalige Auszeichnung, kein Fortschritt).
@@ -943,8 +982,12 @@ const BADGE_CATALOG = [
     id: `vb_${n}`, group: "vb", tier: "lifetime", title: `${n} Volleyball-Einheiten`, icon: "vb", target: n, unit: "Einheiten", rank: i, rankTotal: arr.length,
     current: (c) => c.vbDates.length, check: (c) => c.vbDates.length >= n, earnedDate: (c) => c.vbDates[n - 1] || null,
   })),
+  // v7.17: rank/rankTotal hier bewusst statisch/ungenutzt gelassen (unten in computeEarnedBadges dynamisch
+  // überschrieben) — check() greift jetzt erst ab der ersten Stufen-Schwelle (STREAK_RECORD_TIERS[0]=4),
+  // nicht mehr ab 2, damit unterhalb der ersten Stufe wirklich der neutrale "nicht erreicht"-Zustand zeigt
+  // statt fälschlich schon Bronze (analog zur km-Leiter, die auch erst ab ihrer ersten Schwelle "erreicht" ist).
   { id: "streak_record", group: "streak", tier: "lifetime", title: "Längste Wochen-Serie", icon: "Award", target: null, unit: "Wo.", rank: 0, rankTotal: 1,
-    current: (c) => c.longStreak.best, check: (c) => c.longStreak.best >= 2, earnedDate: (c) => c.longStreak.date },
+    current: (c) => c.longStreak.best, check: (c) => c.longStreak.best >= STREAK_RECORD_TIERS[0], earnedDate: (c) => c.longStreak.date },
   { id: "plan_complete", group: "milestone", tier: "lifetime", title: "16-Wochen-Laufplan komplett", icon: "Star", target: null, unit: null, rank: 0, rankTotal: 1,
     current: (c) => c.runDone, check: (c) => c.runTotal > 0 && c.runDone >= c.runTotal, earnedDate: (c) => c.runPlanDates[c.runPlanDates.length - 1] || null },
   ...[4, 8, 12, 16].map((n, i, arr) => ({
@@ -965,7 +1008,16 @@ function computeEarnedBadges(data, currentWeek, liveStreak) {
   const ctx = { data, totalRunKm, strengthDays, vbDates, runPlanDates, longStreak, liveStreak, runDone, runTotal: runProgress.total };
   return BADGE_CATALOG.map((b) => {
     const earned = !!b.check(ctx);
-    return { ...b, earned, earnedDate: earned && b.earnedDate ? b.earnedDate(ctx) : null, current: b.current ? b.current(ctx) : null };
+    const base = { ...b, earned, earnedDate: earned && b.earnedDate ? b.earnedDate(ctx) : null, current: b.current ? b.current(ctx) : null };
+    // v7.17: "Längste Wochen-Serie" ist ein Rekord-Abzeichen (longestStreakInfo liefert den historischen
+    // Bestwert, sinkt nie zurück — "stillliegen" ist damit für den WERT bereits gegeben) und soll deshalb
+    // wie die km-/Kraft-/VB-Leitern einen mitwachsenden Rang zeigen statt fix Platin (rank:0/rankTotal:1
+    // im Katalog oben bedeutete bisher immer "volle Ausbaustufe", s. badgeMedalTier).
+    if (b.id === "streak_record") {
+      const rank = Math.max(0, STREAK_RECORD_TIERS.filter((n) => longStreak.best >= n).length - 1);
+      return { ...base, rank, rankTotal: STREAK_RECORD_TIERS.length };
+    }
+    return base;
   });
 }
 // Gesamtstatistik & persönliche Rekorde — Garmin-Vorbild, aber nur aus Werten, die die App wirklich hat.
@@ -1084,12 +1136,12 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     <div className={`rounded-xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
       {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
           sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
-      <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway ? { opacity: 0.6 } : {}}>
+      <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway || item.excused ? { opacity: 0.6 } : {}}>
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway || item.excused ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
               {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
               {item.movedAway && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Verschoben → {DAY_FULL[item.movedTo]}</span>}
@@ -1097,8 +1149,11 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
               {item.replacement && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersatz</span>}
               {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
               {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
+              {/* v7.17: eigener Entschuldigen-Status pro Einheit, unabhängig vom globalen illnessLog — eigene Farbe je Grund, damit "Krank (Einheit)" nicht mit einer echten Krankheitsphase verwechselt wird */}
+              {item.excuseType === "krank" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank (Einheit)</span>}
+              {item.excuseType === "koerperlich_nicht_bereit" && <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5">Nicht bereit</span>}
             </div>
-            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.movedAway ? "Verschoben — an anderer Stelle eingeplant" : item.desc].filter(Boolean).join(" · ")}</div>
+            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.movedAway ? "Verschoben — an anderer Stelle eingeplant" : item.excused ? `Entschuldigt (${item.excuseType === "krank" ? "krank" : "körperlich nicht bereit"}) — zählt diese Woche nicht${item.excuseNote ? `: ${item.excuseNote}` : ""}` : item.desc].filter(Boolean).join(" · ")}</div>
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
@@ -1564,7 +1619,7 @@ function BadgePopup({ badges, data, setData, dark }) {
     </div>
   );
 }
-function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
+function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badges, streak, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
   const dark = useDark();
   const today = new Date();
   const todayKey = DAYS[(today.getDay() + 6) % 7];
@@ -1593,9 +1648,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
   const [showReview, setShowReview] = useState(false); // v7.5: Rückblick-Bereich (Ziel/Stats/Fortschritt/Abzeichen) standardmäßig eingeklappt
-  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
-  // v7.0: Auszeichnungen — pure Ableitung aus den Logs (nichts persistiert außer gezeigt/ausgeblendet)
-  const badges = useMemo(() => computeEarnedBadges(data, currentWeek, streak), [data, currentWeek, streak]);
+  // v7.17: streak/badges kommen jetzt als Props vom App-Root (siehe dortiger Kommentar) statt hier berechnet zu werden
   // v6.2: Laufplan-Fortschritt statt totem externen Link — Gesamtzahl live berechnet (58 nur im Basisfall,
   // siehe runPlanProgress), damit sie bei Krankheit + planEndMode "fixed" korrekt sinkt statt zu lügen.
   const runProgress = useMemo(() => runPlanProgress(data.illnessLog, data.planEndMode), [data.illnessLog, data.planEndMode]);
@@ -1670,9 +1723,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           {inPlan && todayPlan
             ? todayPlan.items.map((it) => (
                 <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                  onExpand={it.sport === "run" && !it.replacement && !it.movedAway ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
+                  onExpand={it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
-                  extra={it.sport === "run" && !it.replacement && !it.movedAway ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
+                  extra={it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -1732,6 +1785,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-slate-400" /> Ausgefallen</span>
+          {/* v7.17: eigene Entschuldigen-Kategorie, farblich von "Ausgefallen" unterschieden */}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#e11d48" }} /> Krank (Einheit)</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#d97706" }} /> Nicht bereit</span>
         </div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
@@ -1836,7 +1892,6 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           </div>
         )}
       </Card>
-      <BadgePopup badges={badges} data={data} setData={setData} dark={dark} />
     </div>
   );
 }
@@ -1968,6 +2023,47 @@ function MoveUnitPanel({ item, day, data, setData }) {
   );
 }
 
+/* ==== v7.17: Einheit entschuldigen — "krank" (Einzelfall, unabhängig vom globalen illnessLog) oder
+   "körperlich nicht bereit" (bewusst KEINE Kopplung an effectiveWeek()/Aufbau-Fenster/Kraft-Rotation,
+   wirkt isoliert nur auf diese eine Einheit). Analog zu MoveUnitPanel: eigener overrides-Status
+   "entschuldigt", Revert löscht den Override wieder komplett. ==== */
+function ExcusePanel({ item, data, setData }) {
+  const [showForm, setShowForm] = useState(false);
+  const [type, setType] = useState("krank");
+  const [note, setNote] = useState("");
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  const save = () => {
+    setData((d) => ({
+      ...d,
+      overrides: { ...(d.overrides || {}), [item.uid]: { status: "entschuldigt", excuseType: type, note: note.trim() || undefined } },
+    }));
+    setShowForm(false);
+  };
+  const revert = () => {
+    setData((d) => { const o = { ...(d.overrides || {}) }; delete o[item.uid]; return { ...d, overrides: o }; });
+  };
+  if (item.excused) return (
+    <div className="flex flex-wrap gap-2">
+      <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Entschuldigung zurücknehmen</button>
+    </div>
+  );
+  if (!showForm) return <button onClick={() => setShowForm(true)} className={`${btn} bg-white text-slate-600 border-slate-200`}>Entschuldigen</button>;
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1.5">
+        {[["krank", "Krank"], ["koerperlich_nicht_bereit", "Körperlich nicht bereit"]].map(([k, l]) => (
+          <button key={k} onClick={() => setType(k)} className={`flex-1 rounded-xl px-2 py-2 text-xs font-semibold border transition ${type === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={type === k ? { background: k === "krank" ? "#e11d48" : "#d97706" } : {}}>{l}</button>
+        ))}
+      </div>
+      <input placeholder="Grund (optional, z. B. Herz/Atmung nach easy Lauf schwer)" value={note} onChange={(e) => setNote(e.target.value)} className="tc-input" />
+      <div className="flex gap-2">
+        <button onClick={save} className={`${btn} flex-1 text-white border-transparent`} style={{ background: type === "krank" ? "#e11d48" : "#d97706" }}>Entschuldigen</button>
+        <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -2022,17 +2118,19 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                 {d.items.map((it) => {
                   const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement && !it.moved; // nur echte Vereins-Slots können ausfallen, keine verschobene Kopie
                   const movable = isMovable(it, data);
+                  const excusable = isExcusable(it, data);
                   return (
                     <SessionRow key={it.uid} item={it}
                       done={!!data.done[it.uid]}
                       onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway || excusable || it.excused ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
                       isOpen={open === it.uid}
                       extra={<>
                         {it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : null}
-                        {it.sport === "run" && !it.replacement && !it.movedAway ? <GarminExport item={it} week={effW} /> : null}
+                        {it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? <GarminExport item={it} week={effW} /> : null}
                         {isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : null}
                         {movable || it.movedAway ? <MoveUnitPanel item={it} day={d.day} data={data} setData={setData} /> : null}
+                        {excusable || it.excused ? <ExcusePanel item={it} data={data} setData={setData} /> : null}
                       </>}
                     />
                   );
@@ -3164,9 +3262,11 @@ function RecoveryTab({ data, setData, currentWeek }) {
     return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).map((d, i) => {
       // v7.0: ausgefallene Einheiten (load 0, originalLoad>0) gehören mit in die Liste — sonst sieht ein
       // ausgefallenes Volleyball-Training im Tooltip identisch aus wie ein Tag ohne jede geplante Einheit.
-      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0 || it.cancelled).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick", cancelled: !!it.cancelled, originalLoad: it.originalLoad || 0 })) };
+      // v7.17: dasselbe jetzt für den neuen Entschuldigen-Status (auch load 0, originalLoad>0) — sonst exakt
+      // dieselbe "unsichtbare 0-Last-Kategorie"-Fehlerklasse wie beim v7.14-Wochenrhythmus-Fix.
+      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0 || it.cancelled || it.excused).map((it) => ({ sport: it.sport, label: it.label, load: it.originalLoad || it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && (it.illness === "sick" || it.excused), excuseType: it.excused ? it.excuseType : null, cancelled: !!it.cancelled, originalLoad: it.originalLoad || 0 })) };
       ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; row[s + "Cancelled"] = 0; });
-      row.list.forEach((it) => { row[it.sport + (it.cancelled ? "Cancelled" : it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.cancelled ? it.originalLoad : it.load; });
+      row.list.forEach((it) => { row[it.sport + (it.cancelled ? "Cancelled" : it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.load; });
       return row;
     });
   }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode, data.overrides]);
@@ -3192,7 +3292,9 @@ function RecoveryTab({ data, setData, currentWeek }) {
     if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides).forEach((d) => d.items.forEach((it) => {
       if (doneBy[it.sport] == null) return;
       if (data.done[it.uid]) doneBy[it.sport] += it.load || 0;
-      else if (it.illness === "sick") excusedBy[it.sport] += it.load || 0;
+      // v7.17: "krank" (load bleibt bestehen) und der neue Entschuldigen-Status (load bereits 0,
+      // originalLoad trägt den Wert) brauchen hier denselben Fallback wie im v7.0-Ausgefallen-Muster.
+      else if (it.illness === "sick" || it.excused) excusedBy[it.sport] += it.originalLoad || it.load || 0;
     }));
     const effW = w >= totalW ? TOTAL_WEEKS : effectiveWeek(w, data.illnessLog);
     const row = { w: `${w}`, current: w === currentWeek, future: w > currentWeek, kind: w >= totalW ? "Testwoche" : weekMeta(w).hasT ? "Turnierwoche" : REGEN[effW] ? "Regeneration" : "regulär" };
@@ -3315,7 +3417,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
                   <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
                   {d.list.length ? d.list.map((it, i) => (
                     <div key={i} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
-                      <span style={{ color: it.cancelled ? (dark ? "#64748b" : "#94a3b8") : safeText(dark, SPORT[it.sport].color) }}>{it.cancelled ? "✗" : it.done ? "✓" : it.excused ? "◐" : "○"}</span> {it.label}{it.cancelled ? " · ausgefallen, zählt nicht" : ` ⚡${it.load}${it.done ? "" : it.excused ? " · entschuldigt (krank)" : " · offen"}`}
+                      <span style={{ color: it.cancelled ? (dark ? "#64748b" : "#94a3b8") : safeText(dark, SPORT[it.sport].color) }}>{it.cancelled ? "✗" : it.done ? "✓" : it.excused ? "◐" : "○"}</span> {it.label}{it.cancelled ? " · ausgefallen, zählt nicht" : ` ⚡${it.load}${it.done ? "" : it.excused ? ` · entschuldigt (${it.excuseType === "koerperlich_nicht_bereit" ? "körperlich nicht bereit" : "krank"})` : " · offen"}`}
                     </div>
                   )) : <div style={{ color: dark ? "#94a3b8" : "#64748b" }}>Ruhetag</div>}
                 </div>
@@ -4079,8 +4181,8 @@ function CalendarTab({ data }) {
     for (const d of days) {
       const iso = toLocalISO(d);
       const w = rawPlanWeekOf(d, data.illnessLog, data.planEndMode);
-      // Ausgefallene Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel
-      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled) : [];
+      // Ausgefallene/entschuldigte Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel/entschuldigt wurde
+      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled || it.excused) : [];
       out[iso] = { items, school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
     }
     return out;
@@ -4092,12 +4194,15 @@ function CalendarTab({ data }) {
   const dots = (iso) => {
     const e = byDay[iso]; if (!e) return [];
     const out = [];
-    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
+    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled || it.excused) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
     if (filter.schule && e.school.length) out.push(e.school.some((s) => s.art === "klausur" && !s.erledigt) ? KLAUSUR_COLOR : CAL_SCHOOL);
     return out.slice(0, 4);
   };
   const trainingSub = (it, big) => {
     if (it.cancelled) return "ausgefallen";
+    // v7.17: eigener Entschuldigen-Status pro Einheit (load bereits 0, wie "ausgefallen") — analoges
+    // Früh-Return statt Last "⚡0" mit anzuhängen, Grund im Text unterscheidbar von echter Krankheit.
+    if (it.excused) return `entschuldigt (${it.excuseType === "koerperlich_nicht_bereit" ? "körperlich nicht bereit" : "krank"})${it.excuseNote ? `: ${it.excuseNote}` : ""}`;
     const parts = [];
     if (it.replacement) parts.push("Ersatz");
     if (big && it.desc) parts.push(it.desc); else if (it.dur) parts.push(it.dur);
@@ -4106,7 +4211,7 @@ function CalendarTab({ data }) {
     return parts.join(" · ");
   };
   const trainingRows = (e, big) => e.items.map((it) => (
-    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={!!data.done[it.uid]} cancelled={!!it.cancelled}
+    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={!!data.done[it.uid]} cancelled={!!it.cancelled || !!it.excused}
       label={it.label + (it.time ? ` · ${it.time}` : "")} sub={trainingSub(it, big)} />
   ));
   const schoolRows = (e, big) => e.school.map((s) => (
@@ -4308,6 +4413,11 @@ export default function App() {
   const phaseNow = tournamentPassed ? 2 : 1;
   const daysToT = Math.ceil((TOURNAMENT - atMidnight(today)) / DAY_MS);
   const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
+  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
+  // v7.17: Abzeichen-Berechnung + Popup hierhin (App-Root) gehoben statt in CockpitTab — vorher unmontierte
+  // CockpitTab beim Tab-Wechsel komplett, ein z.B. beim CSV-Import erreichter Meilenstein löste das Popup
+  // erst beim nächsten Besuch des Start-Tabs aus. Am Root ist die Prüfung unabhängig vom aktiven Tab aktiv.
+  const badges = useMemo(() => computeEarnedBadges(data, currentWeek, streak), [data, currentWeek, streak]);
 
   const reset = () => { if (window.confirm("Alle eingetragenen Daten (Läufe, Kraftwerte, Check-ins, Häkchen) und Einstellungen löschen?")) { setData(DEFAULT_DATA); goScreen("mehr"); if (hasStorage) window.storage.delete(STORAGE_KEY, false).catch(() => {}); } };
   const manualRefresh = async () => {
@@ -4448,16 +4558,18 @@ export default function App() {
           ) : screen === "recovery" ? (
             <RecoveryTab data={data} setData={setData} currentWeek={currentWeek} />
           ) : (
-            <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} goWeek={() => goScreen("woche")} goRecovery={() => goScreen("recovery")} goKcal={() => goScreen("kcal")} goSchule={() => goScreen("schule")} tournamentPassed={tournamentPassed} />
+            <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} badges={badges} streak={streak} goWeek={() => goScreen("woche")} goRecovery={() => goScreen("recovery")} goKcal={() => goScreen("kcal")} goSchule={() => goScreen("schule")} tournamentPassed={tournamentPassed} />
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.16` : "Fortschritt wird automatisch gespeichert · v7.16"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.17` : "Fortschritt wird automatisch gespeichert · v7.17"}</span>
           </footer>
         </main>
       </div>
       <BottomTabBar screen={screen} setScreen={goScreen} onQuickAdd={() => setQuickAddOpen(true)} />
       {quickAddOpen && <QuickAddSheet onSelect={onQuickAddSelect} onClose={() => setQuickAddOpen(false)} />}
+      {/* v7.17: am Root statt in CockpitTab, damit Meilenstein-Popups unabhängig vom aktiven Tab erscheinen */}
+      {loaded && <BadgePopup badges={badges} data={data} setData={setData} dark={dark} />}
     </div>
     </ThemeContext.Provider>
   );
