@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.17
+# Trainings-Cockpit v7.18
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -94,9 +94,10 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **„Längste Wochen-Serie" wächst jetzt sichtbar mit**: das Abzeichen zeigte unabhängig vom tatsächlichen Wert immer die höchste (Platin-)Stufe — wirkte bei einer noch kurzen Serie wie ein Rückschritt statt ein Ziel. Nutzt jetzt dieselben Schwellen wie die Serie-Abzeichen 4/8/12/16 Wochen und steigt Bronze→Silber→Gold→Platin mit. Der zugrunde liegende Rekord-Wert war schon vorher korrekt (sinkt nie bei einer gerissenen Serie) — nur die Rang-Anzeige war hartkodiert.
   - **Einheit entschuldigen: „körperlich nicht bereit"** als neuer, von „krank" unterscheidbarer Grund neben dem bestehenden „Verschieben"-Button einer offenen Einheit — bewusst ohne Kopplung an die Krankheits-/Aufbau-Fenster-Logik, wirkt isoliert nur auf die eine Einheit (0 Belastungspunkte, bricht die Wochen-Serie nicht, wie ein Ausfall). Im Wochenrhythmus-Chart, im Kalender und in den Recovery-Wochenkarten mit eigener Farbe/Beschriftung sichtbar, statt wie ein normaler Ausfall unterzugehen.
   - Zwei zusätzlich gemeldete Abzeichen-Bugs (fehlendes Icon im Popup, doppelte Anzeige in „Neueste Erfolge") ließen sich im Code nicht nachstellen — die zugehörige Logik war bereits korrekt. Beide werden nach diesem Update erneut am echten Gerät geprüft, da der Popup-Timing-Bugfix oben die wahrscheinlichste Ursache behoben haben könnte.
+- v7.18 – **Generische Aktivität eintragen**: neuer Unterreiter „Sonstiges" im Fortschritt-Tab (plus eigener Schnelleintrag-Button) für alles, was zu keinem Plan-Slot gehört — Reaktivierungs-Läufe, ein Kalibrierungs-Test, spontane Zusatzeinheiten. Eigenständiges `customLog[]` mit Freitext-Label, Kategorie (fürs spätere Filtern, z. B. „alle Tests"), optionaler Dauer/RPE/Notiz — RPE(1–5) wird grob zu Belastungspunkten (1–7⚡). Läufe ohne Plan-Bezug lassen sich zusätzlich beim manuellen Lauf-Eintrag mit einem optionalen Label/Ergebnis kennzeichnen, statt kommentarlos in der normalen Pace-Statistik zu verschwinden. Der Wochenrhythmus-Chart bekommt dafür eine eigene vierte Kategorie „Sonstige/Manuell" (eigene Farbe, eigenes Stapel-Segment) — sonst exakt die v7.14-Fehlerklasse, bei der eine neue 0-/Last-Kategorie optisch verschwindet. Bewusst ohne Wirkung auf Serien-Badges (nur km/Kraft/VB-Gesamtsummen, falls als Lauf getaggt). Dabei gefundener, unabhängiger Bugfix: der „Rückgängig"-Toast nach dem Löschen eines Eintrags (Kraft/Lauf/Recovery/Schule/Sonstiges) saß zu nah am unteren Rand und war von der fixen Bottom-Tab-Bar verdeckt/nicht klickbar — betraf die App durchgängig, nicht nur die neue Funktion.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.17-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.18-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

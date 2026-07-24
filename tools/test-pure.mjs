@@ -757,11 +757,11 @@ t("buildWeekPlan ohne Krankheit bleibt byte-identisch zu vorher (kein Ramp-Einfl
 console.log("v7.13-Fix: dayLoadBySport — löst dominantSport ab (kein Sportart-Sieger mehr, der die andere verdeckt)");
 t("exaktes Unentschieden zweier Sportarten: beide Lasten bleiben erhalten, keine geht unter", () => {
   const out = M.dayLoadBySport([{ sport: "vb", load: 6 }, { sport: "run", load: 6 }]);
-  assert.deepEqual(out, { vb: 6, run: 6, strength: 0 });
+  assert.deepEqual(out, { vb: 6, run: 6, strength: 0, sonstige: 0 });
 });
 t("ungleiche Lasten: alle drei Sportarten unabhängig summiert, nicht nur die höchste", () => {
   const out = M.dayLoadBySport([{ sport: "run", load: 7 }, { sport: "strength", load: 3 }, { sport: "vb", load: 6 }]);
-  assert.deepEqual(out, { vb: 6, run: 7, strength: 3 });
+  assert.deepEqual(out, { vb: 6, run: 7, strength: 3, sonstige: 0 });
 });
 t("mehrere Einheiten derselben Sportart am Tag summieren sich (nicht nur die letzte zählt)", () => {
   const out = M.dayLoadBySport([{ sport: "run", load: 4 }, { sport: "run", load: 2 }]);
@@ -769,11 +769,15 @@ t("mehrere Einheiten derselben Sportart am Tag summieren sich (nicht nur die let
 });
 t("ausgefallene Einheit (load bereits auf 0 genullt) trägt nichts mehr bei", () => {
   const out = M.dayLoadBySport([{ sport: "vb", load: 0, cancelled: true, originalLoad: 6 }]);
-  assert.deepEqual(out, { vb: 0, run: 0, strength: 0 });
+  assert.deepEqual(out, { vb: 0, run: 0, strength: 0, sonstige: 0 });
 });
 t("echter Ruhetag: alle drei Sportarten 0", () => {
   const out = M.dayLoadBySport([{ sport: "rest", load: 0 }]);
-  assert.deepEqual(out, { vb: 0, run: 0, strength: 0 });
+  assert.deepEqual(out, { vb: 0, run: 0, strength: 0, sonstige: 0 });
+});
+t("v7.18: 'sonstige' (customLog-Synthese) wird wie eine vierte Sportart mitsummiert, andere unberührt", () => {
+  const out = M.dayLoadBySport([{ sport: "run", load: 6 }, { sport: "sonstige", load: 3 }, { sport: "sonstige", load: 2 }]);
+  assert.deepEqual(out, { vb: 0, run: 6, strength: 0, sonstige: 5 });
 });
 
 console.log(`\nAlle ${n} Tests grün.`);
