@@ -800,6 +800,13 @@ function riegel5k(dist, sec) {
 
 /* ===================== V3: Typbewusste Auswertung der Runden-Daten ===================== */
 const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+// v7.20: zentrierter gleitender 3-Punkte-Durchschnitt für den Laufökonomie-Trend-Toggle — Lücken
+// (null, z. B. Läufe ohne Schrittlänge) werden im Fenster übersprungen statt die Nachbarwerte zu verzerren.
+const movingAvg3 = (vals) => vals.map((v, i) => {
+  if (v == null) return null;
+  const win = [vals[i - 1], v, vals[i + 1]].filter((x) => x != null);
+  return win.reduce((a, b) => a + b, 0) / win.length;
+});
 const isoAddDays = (iso, delta) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + delta); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const lastNDates = (n) => { const t = todayISO(); return Array.from({ length: n }, (_, i) => isoAddDays(t, -(n - 1 - i))); };
 // Arbeitsrunden (schnelles Cluster) von Trab-/Standpausen trennen — Basis für Intervalle & Tempo
@@ -2523,6 +2530,11 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
   const [metric, setMetric] = useState("economy");
   const [runType, setRunType] = useState("all");
   const [range, setRange] = useState("all");
+  // v7.20: Trend-Toggle je Laufökonomie-Linie unabhängig, rein UI-lokal (nicht persistiert) — s. Samples-
+  // Artefakt-Freigabe. Reset bei Filter-/Zeitraumwechsel wäre verwirrend (Chip bliebe "an", Linie fehlt
+  // kurz), deshalb bewusst NICHT an runType/range gekoppelt zurückgesetzt.
+  const [cadenceTrend, setCadenceTrend] = useState(false);
+  const [strideTrend, setStrideTrend] = useState(false);
   const byType = (rows) => (runType === "all" ? rows : rows.filter((r) => r.type === runType));
   const economyByType = useMemo(() => byType(economySeries), [economySeries, runType]);
   const efByType = useMemo(() => byType(efSeries), [efSeries, runType]);
@@ -2531,16 +2543,37 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
   const vo2F = useMemo(() => applyTimeRange(vo2Series, range), [vo2Series, range]);
   const lastEconomy = economyByType.length ? economyByType[economyByType.length - 1] : null;
   const lastEf = efByType.length ? efByType[efByType.length - 1] : null;
+  const hasStride = economyF.some((r) => r.stride != null);
+  // v7.20: gleitender 3-Lauf-Ø je Linie, clientseitig aus dem bereits gefilterten/sortierten economyF
+  // berechnet (nicht persistiert) — nur sichtbar, solange der jeweilige Trend-Chip aktiv ist.
+  const economyChartData = useMemo(() => {
+    const cadenceMA = movingAvg3(economyF.map((r) => r.cadence));
+    const strideMA = movingAvg3(economyF.map((r) => r.stride));
+    return economyF.map((r, i) => ({ ...r, cadenceMA: cadenceMA[i], strideMA: strideMA[i] }));
+  }, [economyF]);
   // v7.3: Tap-Readout für die Laufökonomie-Rohwerte (Kadenz/Schrittlänge), gleiches Muster wie bei
   // "Fortschritt je Lauftyp" — Default zeigt den letzten Punkt.
   const { sel: ecoSel, onPick: onEcoPick } = usePairReadout(economyF.length);
   const ecoSelRow = ecoSel != null ? economyF[ecoSel] : null;
-  const ecoDot = (props) => {
+  const cadenceDot = (props) => {
     const { cx, cy, index } = props;
     if (cx == null || cy == null) return null;
     const active = index === ecoSel;
-    return <circle key={`eco-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#059669" stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
+    return <circle key={`cad-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#059669" opacity={cadenceTrend && !active ? 0.35 : 1} stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
   };
+  const strideDot = (props) => {
+    const { cx, cy, index, payload } = props;
+    if (cx == null || cy == null || payload.stride == null) return null;
+    const active = index === ecoSel;
+    return <circle key={`str-${index}`} cx={cx} cy={cy} r={active ? 6 : 3} fill="#8b5cf6" opacity={strideTrend && !active ? 0.35 : 1} stroke={active ? (dark ? "#0b1220" : "#ffffff") : "none"} strokeWidth={active ? 2 : 0} />;
+  };
+  const trendChip = (on, toggle, color, dashed, label) => (
+    <button onClick={toggle} className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition" style={on ? { background: softBg(dark, color, color + "1f"), borderColor: color + "66", color: safeText(dark, color) } : { background: dark ? "transparent" : "#fff", borderColor: dark ? "#334155" : "#e2e8f0", color: dark ? "#94a3b8" : "#64748b" }}>
+      <span className="inline-block w-4" style={{ borderTop: `2.5px ${dashed ? "dashed" : "solid"} ${color}` }} />
+      {label}
+      {on && <span className="rounded px-1 text-[9px] font-extrabold text-white" style={{ background: color }}>Ø</span>}
+    </button>
+  );
   return (
     <Card className="p-4">
       <div className="flex gap-1 rounded-xl bg-slate-100 p-1 mb-3">
@@ -2560,23 +2593,46 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
 
       {metric === "economy" && (
         <>
-          <div className="text-[10px] text-slate-400 mb-2">Kadenz geteilt durch Schrittlänge in einer Linie statt zwei Charts — steigt sie, wird der Schritt kürzer/schneller (oft ein Zeichen besserer Lauftechnik); tippen auf einen Punkt zeigt die beiden Rohwerte einzeln</div>
-          {lastEconomy && lastEconomy.ratio != null && <div className="mb-2 flex items-baseline gap-1.5"><span className="font-num text-xl font-bold text-slate-800">{lastEconomy.ratio}</span><span className="text-[10px] text-slate-400">· aktuell</span></div>}
-          {economyF.filter((r) => r.ratio != null).length >= 2 ? (
+          <div className="text-[10px] text-slate-400 mb-2">Zwei Rohdaten-Linien statt einer Verhältniszahl: Schrittfrequenz (grün) und Schrittlänge (violett, gestrichelt) — auf einen Punkt tippen zeigt beide Werte, auf einen Chip unten den Trend (gleitender 3-Lauf-Ø) nur für diese eine Linie</div>
+          {runType === "all" && <div className="text-[10px] mb-2" style={{ color: safeText(dark, "#b45309") }}>Bei „Alle Typen" mischen sich unterschiedliche Lauftypen mit strukturell verschiedener Kadenz/Schrittlänge — für ein klareres Bild nach Lauftyp filtern.</div>}
+          {lastEconomy && (
+            <div className="mb-2 flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
+              <span className="font-num text-xl font-bold" style={{ color: safeText(dark, "#059669") }}>{lastEconomy.cadence}{cadenceTrend && <sup className="text-[10px]">Ø</sup>}</span><span className="text-xs text-slate-500">spm</span>
+              <span className="text-slate-300">·</span>
+              {lastEconomy.stride != null
+                ? <><span className="font-num text-xl font-bold" style={{ color: safeText(dark, "#8b5cf6") }}>{lastEconomy.stride.toFixed(2)}{strideTrend && <sup className="text-[10px]">Ø</sup>}</span><span className="text-xs text-slate-500">m</span></>
+                : <span className="text-xs text-slate-400">keine Schrittlänge</span>}
+              <span className="text-[10px] text-slate-400">· aktuell</span>
+            </div>
+          )}
+          {economyF.length >= 2 ? (
             <>
               <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
-                <LineChart data={economyF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} onClick={onEcoPick}>
+                <LineChart data={economyChartData} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} onClick={onEcoPick}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
-                  <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} />
+                  <YAxis yAxisId="cadence" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
+                  {hasStride && <YAxis yAxisId="stride" orientation="right" domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />}
                   <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
-                  {ecoSelRow && <ReferenceLine x={ecoSelRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
-                  <Line type="linear" dataKey="ratio" stroke="#059669" strokeWidth={2.5} dot={ecoDot} connectNulls isAnimationActive={false} />
+                  {/* v7.20-Fix: yAxisId muss hier explizit gesetzt sein, sobald mindestens eine YAxis einen
+                      benannten yAxisId statt der impliziten Default-"0" trägt — sonst sucht ReferenceLine
+                      intern die (nicht mehr existierende) Achse "0" und Recharts wirft einen Invariant-Fehler
+                      (leerer Bildschirm). Betrifft nur diesen zweiachsigen Chart, kein bestehendes Muster
+                      im Rest der App verwendet bisher benannte yAxisIds. */}
+                  {ecoSelRow && <ReferenceLine yAxisId="cadence" x={ecoSelRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+                  <Line yAxisId="cadence" type="linear" dataKey="cadence" stroke="#059669" strokeWidth={cadenceTrend ? 1.5 : 2.5} strokeOpacity={cadenceTrend ? 0.35 : 1} dot={cadenceDot} isAnimationActive={false} />
+                  {cadenceTrend && <Line yAxisId="cadence" type="linear" dataKey="cadenceMA" stroke="#059669" strokeWidth={3} dot={false} connectNulls isAnimationActive={false} />}
+                  {hasStride && <Line yAxisId="stride" type="linear" dataKey="stride" stroke="#8b5cf6" strokeDasharray="6 4" strokeWidth={strideTrend ? 1.5 : 2.5} strokeOpacity={strideTrend ? 0.35 : 1} dot={strideDot} connectNulls isAnimationActive={false} />}
+                  {hasStride && strideTrend && <Line yAxisId="stride" type="linear" dataKey="strideMA" stroke="#8b5cf6" strokeDasharray="6 4" strokeWidth={3} dot={false} connectNulls isAnimationActive={false} />}
                 </LineChart>
               </ResponsiveContainer></div>
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {trendChip(cadenceTrend, () => setCadenceTrend((v) => !v), "#059669", false, "Schrittfrequenz")}
+                {hasStride && trendChip(strideTrend, () => setStrideTrend((v) => !v), "#8b5cf6", true, "Schrittlänge")}
+              </div>
               {ecoSelRow && (
                 <div className="mt-1.5 text-[10px]" style={{ color: dark ? "#64748b" : "#94a3b8" }}>
-                  {ecoSelRow.date}: {ecoSelRow.cadence} spm{ecoSelRow.stride != null ? ` · ${ecoSelRow.stride} m Schrittlänge` : ""}
+                  {ecoSelRow.date}: {ecoSelRow.cadence} spm{ecoSelRow.stride != null ? ` · ${ecoSelRow.stride.toFixed(2)} m Schrittlänge` : ""}
                 </div>
               )}
             </>
@@ -2861,13 +2917,11 @@ function RunProgress({ data, setData, currentWeek }) {
   const economySeries = useMemo(() => data.runLog
     .map((r) => {
       const e = runEffort(r); const cadence = e && e.cadence != null ? e.cadence : r.cadence; const stride = e && e.strideLen != null ? e.strideLen : (r.strideLen ?? null);
-      // v7.3: Kadenz/Schrittlänge als EIN Verhältniswert statt zwei Linien auf zwei Achsen (Nutzerwunsch:
-      // "besser vergleichen, nicht verwirrt von zwei Charts") — steigt die Kadenz bei kürzerer Schrittlänge,
-      // steigt der Wert, was mit besserer Lauftechnik assoziiert wird. Beide Rohwerte bleiben per Tap einsehbar.
-      // Ganzzahl statt Nachkommastelle: bei 3-stelligen Werten (150-200+) sprengte "172.7" die
-      // Achsenbreite (SVG-Text ragte aus dem Chart) — für einen reinen Trendwert reicht die Tendenz.
-      const ratio = cadence && stride ? Math.round(cadence / stride) : null;
-      return cadence ? { iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence, stride, ratio } : null;
+      // v7.20: zurück zu zwei Rohdaten-Linien (Kadenz/Schrittlänge) statt des v7.3-Verhältniswerts —
+      // Nutzer-Feedback diesmal umgekehrt: die eine Zahl verschleierte, WELCHER der beiden Werte sich
+      // ändert. Kein "ratio"-Feld mehr, dafür ein per-Chart berechneter gleitender 3-Lauf-Durchschnitt
+      // je Linie (s. SmartChartsCard), unabhängig zuschaltbar statt fest verrechnet.
+      return cadence ? { iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence, stride } : null;
     })
     .filter(Boolean)
     .sort((a, b) => a.iso.localeCompare(b.iso)), [data.runLog]);
@@ -4737,7 +4791,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.19` : "Fortschritt wird automatisch gespeichert · v7.19"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.20` : "Fortschritt wird automatisch gespeichert · v7.20"}</span>
           </footer>
         </main>
       </div>

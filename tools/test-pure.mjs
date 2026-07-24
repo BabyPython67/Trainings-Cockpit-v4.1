@@ -643,6 +643,17 @@ t("v7.18: target bleibt null (nicht global überschrieben) — BadgeTile/BadgeDe
   assert.equal(maxed.target, null);
 });
 
+console.log("v7.20: Laufökonomie-Trend — gleitender 3-Punkte-Durchschnitt, Lücken übersprungen");
+t("movingAvg3: mittlerer Wert bei dichten Daten = Durchschnitt aus Vorgänger/Wert/Nachfolger", () => {
+  assert.deepEqual(M.movingAvg3([10, 20, 30, 40]), [15, 20, 30, 35]);
+});
+t("movingAvg3: null-Lücke bleibt an ihrer eigenen Stelle null (kein erfundener Wert), wird aber bei den Nachbarn im Fenster übersprungen statt sie zu verzerren", () => {
+  assert.deepEqual(M.movingAvg3([10, null, 30, 40]), [10, null, 35, 35]);
+});
+t("movingAvg3: einzelner Wert (leeres Array drumherum) bleibt unverändert", () => {
+  assert.deepEqual(M.movingAvg3([42]), [42]);
+});
+
 console.log("v7.7: Hexagon-Medaille — badgeMedalTier löst die v7.3-Formen-Eskalation ab");
 t("erste Stufe einer Leiter -> Bronze (tierIdx 0)", () => {
   assert.equal(M.badgeMedalTier(0, 9).tierIdx, 0);
