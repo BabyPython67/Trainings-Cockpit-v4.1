@@ -636,6 +636,12 @@ t("Stillliegen: Rang bleibt am historischen Rekord hängen, sinkt nicht mit eine
   assert.equal(b.current, 8);
   assert.equal(b.rank, 1); // weiterhin Silber (Schwelle 8), nicht auf die kurze laufende Serie zurückgefallen
 });
+t("v7.18: target bleibt null (nicht global überschrieben) — BadgeTile/BadgeDetailModal zeigen sonst die falsche nächste Schwelle statt current in der Banderole", () => {
+  const below = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done: doneForWeeks([1, 2]) }, 2, 0).find((x) => x.id === "streak_record");
+  assert.equal(below.target, null);
+  const maxed = M.computeEarnedBadges({ ...M.DEFAULT_DATA, done: doneForWeeks(Array.from({ length: 16 }, (_, i) => i + 1)) }, 16, 0).find((x) => x.id === "streak_record");
+  assert.equal(maxed.target, null);
+});
 
 console.log("v7.7: Hexagon-Medaille — badgeMedalTier löst die v7.3-Formen-Eskalation ab");
 t("erste Stufe einer Leiter -> Bronze (tierIdx 0)", () => {

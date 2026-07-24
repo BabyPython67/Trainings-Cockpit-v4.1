@@ -1044,6 +1044,12 @@ function computeEarnedBadges(data, currentWeek, liveStreak) {
     // im Katalog oben bedeutete bisher immer "volle Ausbaustufe", s. badgeMedalTier).
     if (b.id === "streak_record") {
       const rank = Math.max(0, STREAK_RECORD_TIERS.filter((n) => longStreak.best >= n).length - 1);
+      // v7.19: target bewusst NICHT hier überschrieben (bleibt null wie im Katalog) — BadgeTile/
+      // BadgeDetailModal zeigen bei target==null aktuell korrekt den current-Wert in der Banderole
+      // (z. B. "8" statt der nächsten Schwelle). "Nächste Ziele" (BadgesCard) braucht die nächste
+      // 4/8/12/16-Schwelle nur lokal für den Balken und berechnet sie dort direkt aus rank/current
+      // gegen STREAK_RECORD_TIERS — kein Bedarf, das global auf dem Abzeichen-Objekt zu spiegeln
+      // (ein Versuch das zu tun hätte genau die Banderolen-Anzeige oben kaputt gemacht).
       return { ...base, rank, rankTotal: STREAK_RECORD_TIERS.length };
     }
     return base;
@@ -1527,10 +1533,42 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
   const today = todayISO();
   const pinned = lifetime.filter((b) => b.earned && b.earnedDate === today);
   const recent = lifetime.filter((b) => b.earned && b.earnedDate && b.earnedDate !== today).sort((a, b) => b.earnedDate.localeCompare(a.earnedDate)).slice(0, 3);
-  // Nächste Ziele: je Gruppe die erste offene Stufe, die 2 mit dem meisten Fortschritt zuerst
-  const nextIds = new Set();
-  Object.keys(BADGE_GROUPS).forEach((g) => { const n = lifetime.find((b) => b.group === g && !b.earned && b.target != null); if (n) nextIds.add(n.id); });
-  const nextGoals = lifetime.filter((b) => nextIds.has(b.id)).sort((a, b) => (b.current / b.target) - (a.current / a.target)).slice(0, 2);
+  // v7.19: Nächste Ziele — je Gruppe die zuletzt erreichte UND die nächste offene Stufe (der Balken läuft
+  // jetzt zwischen beiden statt ab 0). Ist eine Gruppe komplett durchlaufen ("maxed"), bleibt sie sichtbar
+  // (Balken 100%, Hinweistext) statt aus der Liste zu verschwinden. "streak" hat nur EIN einziges, intern
+  // mitwachsendes Abzeichen (streak_record, s. computeEarnedBadges) statt separater IDs je Stufe wie
+  // run/strength/vb — deshalb eigener Zweig, der leichtgewichtige Anzeigeobjekte für die vorherige/nächste
+  // Stufe konstruiert (kein echter Katalog-Eintrag, nur für diese Zeile gebraucht).
+  const LADDER_GROUPS = ["run", "strength", "vb"];
+  const nextGoalEntries = [];
+  LADDER_GROUPS.forEach((g) => {
+    const ladder = lifetime.filter((b) => b.group === g && b.target != null).sort((a, b) => a.rank - b.rank);
+    if (!ladder.length) return;
+    const next = ladder.find((b) => !b.earned);
+    if (next) {
+      const earnedBefore = ladder.filter((b) => b.earned);
+      nextGoalEntries.push({ group: g, prev: earnedBefore.length ? earnedBefore[earnedBefore.length - 1] : null, badge: next, maxed: false });
+    } else {
+      const last = ladder[ladder.length - 1];
+      nextGoalEntries.push({ group: g, prev: last, badge: last, maxed: true });
+    }
+  });
+  {
+    const sr = lifetime.find((b) => b.id === "streak_record");
+    if (sr) {
+      const lastIdx = STREAK_RECORD_TIERS.length - 1;
+      const maxed = sr.earned && sr.rank >= lastIdx && sr.current >= STREAK_RECORD_TIERS[lastIdx];
+      const mkRung = (idx, earned) => ({ rank: idx, rankTotal: STREAK_RECORD_TIERS.length, earned, icon: sr.icon, group: "streak", title: sr.title, target: STREAK_RECORD_TIERS[idx], current: sr.current });
+      let prev, badge;
+      if (maxed) { prev = mkRung(lastIdx, true); badge = prev; }
+      else if (sr.earned) { prev = mkRung(sr.rank, true); badge = mkRung(sr.rank + 1, false); }
+      else { prev = null; badge = mkRung(0, false); }
+      nextGoalEntries.push({ group: "streak", prev, badge, maxed });
+    }
+  }
+  // Maxed-Kategorien sollen echten, noch offenen Zielen nicht die begrenzten Top-2-Plätze wegnehmen —
+  // sie haben ja trivial "100% Fortschritt" und würden sonst permanent oben stehen bleiben.
+  const nextGoals = nextGoalEntries.sort((a, b) => (a.maxed === b.maxed ? (b.badge.current / b.badge.target) - (a.badge.current / a.badge.target) : a.maxed ? 1 : -1)).slice(0, 2);
   const liveBest = live.filter((b) => b.earned).slice(-1)[0] || null;
   const groups = ["run", "strength", "vb", "streak", "milestone"];
   return (
@@ -1575,16 +1613,34 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
       {nextGoals.length > 0 && (
         <div className="mt-2.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Nächste Ziele</div>
-          <div className="space-y-1.5">{nextGoals.map((b) => {
-            const g = BADGE_GROUPS[b.group];
-            const pct = Math.min(100, (b.current / b.target) * 100);
+          {/* v7.19: Balken jetzt segmentiert (zuletzt erreicht -> nächstes Ziel) statt ab 0, mit echter
+              Hexagon-Medaille an beiden Enden statt eines schlichten Icon-Kreises. Erste Stufe (kein
+              Vorgänger): neutraler gestrichelter Platzhalter links. Maxed: beide Enden dieselbe Medaille,
+              farbig, Balken 100 %, Hinweistext statt Zahlen. */}
+          <div className="space-y-2.5">{nextGoals.map((entry) => {
+            const g = BADGE_GROUPS[entry.group];
+            const pct = entry.maxed ? 100 : entry.prev
+              ? Math.min(100, Math.max(0, ((entry.badge.current - entry.prev.target) / (entry.badge.target - entry.prev.target)) * 100))
+              : Math.min(100, (entry.badge.current / entry.badge.target) * 100);
+            const prevTier = entry.prev ? badgeMedalTier(entry.prev.rank, entry.prev.rankTotal) : null;
+            const nextTier = badgeMedalTier(entry.badge.rank, entry.badge.rankTotal);
             return (
-              <div key={b.id} className="flex items-center gap-2.5">
-                <div className="h-7 w-7 rounded-full flex items-center justify-center shrink-0" style={{ background: softBg(dark, g.color, g.color + "1f") }}><BadgeGlyph icon={b.icon} size={13} color={safeText(dark, g.color)} /></div>
+              <div key={entry.group} className="flex items-center gap-2">
+                {entry.prev ? (
+                  <HexMedal size={34} tierIdx={prevTier.tierIdx} level={prevTier.level} glowAlpha={prevTier.glowAlpha} earned category={g} icon={entry.prev.icon} metric={entry.prev.target} />
+                ) : (
+                  <div className="shrink-0 rounded-full border-2 border-dashed" style={{ width: 34, height: 34, borderColor: dark ? "#334155" : "#cbd5e1" }} />
+                )}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-2"><span className="text-[11px] font-semibold text-slate-700">{b.title}</span><span className="text-[10px] font-num text-slate-400">{Math.round(b.current * 10) / 10}/{b.target}</span></div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-slate-700">{entry.badge.title}</span>
+                    {entry.maxed
+                      ? <span className="text-[10px] font-bold" style={{ color: safeText(dark, g.color) }}>Höchste Stufe erreicht</span>
+                      : <span className="text-[10px] font-num text-slate-400">{Math.round(entry.badge.current * 10) / 10}/{entry.badge.target}</span>}
+                  </div>
                   <div className="mt-0.5 h-1.5 rounded-full overflow-hidden" style={{ background: dark ? "#243049" : "#e2e8f0" }}><div className="h-full rounded-full" style={{ width: `${pct}%`, background: g.color }} /></div>
                 </div>
+                <HexMedal size={34} tierIdx={nextTier.tierIdx} level={nextTier.level} glowAlpha={nextTier.glowAlpha} earned={entry.maxed} category={g} icon={entry.badge.icon} metric={entry.maxed ? entry.badge.target : null} />
               </div>
             );
           })}</div>
@@ -4681,7 +4737,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.18` : "Fortschritt wird automatisch gespeichert · v7.18"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.19` : "Fortschritt wird automatisch gespeichert · v7.19"}</span>
           </footer>
         </main>
       </div>
