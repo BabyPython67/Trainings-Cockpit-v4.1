@@ -1700,15 +1700,23 @@ function BadgePopup({ badges, data, setData, dark }) {
   }, [allEarnedIds.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const dismiss = () => setData((d) => ({ ...d, seenBadgeIds: [...new Set([...(d.seenBadgeIds || []), ...fresh.map((b) => b.id)])] }));
   if (!fresh.length) return null;
+  // v7.21: echte HexMedal statt generischem Pokal-Kreis + kleinem Icon — dieselbe Metric-Berechnung wie
+  // BadgeTile/BadgeDetailModal (fresh-Einträge sind immer earned, daher hier ohne den unearned-Zweig).
+  const multi = fresh.length > 1;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(2,6,23,0.55)" }} onClick={dismiss}>
       <div className="rounded-2xl p-5 w-full max-w-xs text-center shadow-xl" style={{ background: dark ? "#161d2e" : "#ffffff" }} onClick={(e) => e.stopPropagation()}>
-        <div className="mx-auto h-14 w-14 rounded-full flex items-center justify-center mb-3" style={{ background: "linear-gradient(135deg,#f59e0b,#f43f5e)" }}><Award size={26} color="#fff" /></div>
+        <div className={`flex justify-center mb-3 ${multi ? "flex-wrap gap-3" : ""}`}>
+          {fresh.map((b) => {
+            const g = BADGE_GROUPS[b.group];
+            const { tierIdx, level, glowAlpha } = badgeMedalTier(b.rank || 0, b.rankTotal || 1);
+            const metric = b.target != null ? b.target : (b.unit && b.current > 0 ? Math.round(b.current * 10) / 10 : null);
+            return <HexMedal key={b.id} size={multi ? 76 : 130} tierIdx={tierIdx} level={level} glowAlpha={glowAlpha} earned category={g} icon={b.icon} metric={metric} />;
+          })}
+        </div>
         <div className="font-display font-bold text-lg" style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>{fresh.length === 1 ? "Abzeichen erreicht!" : `${fresh.length} Abzeichen erreicht!`}</div>
         <div className="mt-2 space-y-1">{fresh.map((b) => (
-          <div key={b.id} className="flex items-center justify-center gap-2 text-sm font-semibold" style={{ color: safeText(dark, BADGE_GROUPS[b.group].color) }}>
-            <BadgeGlyph icon={b.icon} size={15} color={safeText(dark, BADGE_GROUPS[b.group].color)} /> {b.title}
-          </div>
+          <div key={b.id} className="text-sm font-semibold" style={{ color: safeText(dark, BADGE_GROUPS[b.group].color) }}>{b.title}</div>
         ))}</div>
         <button onClick={dismiss} className="mt-4 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold">Stark! Weiter</button>
       </div>
@@ -4791,7 +4799,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.20` : "Fortschritt wird automatisch gespeichert · v7.20"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.21` : "Fortschritt wird automatisch gespeichert · v7.21"}</span>
           </footer>
         </main>
       </div>

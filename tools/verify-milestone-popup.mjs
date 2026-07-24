@@ -58,10 +58,26 @@ for (const theme of ["light", "dark"]) {
   if (!(await popupTitle.count())) { problems.push(theme + ": Item 3 REGRESSION — kein Popup nach Meilenstein-Erreichen außerhalb des Start-Tabs"); await ctx.close(); continue; }
   // Item 4 (Nachtest): korrektes Icon (Berg-Symbol für Lauf-km-Abzeichen), NICHT der generische
   // Trophy-Fallback aus BadgeGlyph (greift nur, wenn "icon" nicht auf ein bekanntes Icon auflöst).
-  const popup = page.locator("div", { has: popupTitle });
-  const popupSvgClass = await popup.locator("svg").first().getAttribute("class");
-  if (!popupSvgClass || /trophy/i.test(popupSvgClass)) problems.push(theme + `: Item 4 Nachtest — Popup-Icon-Klasse "${popupSvgClass}" wirkt wie der generische Trophy-Fallback statt des Berg-Icons`);
+  // v7.21: die vendorten lucide-Icons hier rendern OHNE "class"-Attribut (kein "lucide lucide-x" wie im
+  // echten npm-Paket) — eine Klassen-basierte Prüfung geht also nicht. Stattdessen direkt auf die exakte,
+  // per Playwright aus window.lucide extrahierte Pfad-Geometrie prüfen (stabiler als eine Klasse zu raten):
+  // Mountain = "m8 3 4 8 5-5 5 15H2L8 3z", ein eindeutiger Trophy-Pfad = "M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z".
+  // v7.21: gezielt die Popup-Karte selbst (rounded-2xl-Klasse ist eindeutig für dieses Modal), nicht
+  // "div mit has: popupTitle" — letzteres matcht auch alle umschließenden Ancestor-Divs (root/App-Shell),
+  // was popup.evaluate() (braucht genau ein Element) mit "strict mode violation" scheitern lässt.
+  const popup = page.locator("div.rounded-2xl", { hasText: "Abzeichen erreicht!" });
+  const hasMountainPath = await popup.locator('path[d="m8 3 4 8 5-5 5 15H2L8 3z"]').count();
+  const hasTrophyPath = await popup.locator('path[d="M6 9a6 6 0 0 0 12 0V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z"]').count();
+  if (!hasMountainPath) problems.push(theme + ": Item 4 Nachtest — Berg-Icon (Mountain) nicht im Popup gefunden");
+  if (hasTrophyPath) problems.push(theme + ": Item 4 Nachtest — Popup zeigt den generischen Trophy-Fallback statt des Berg-Icons");
   if (!(await popup.locator("text=100 km gesamt").count())) problems.push(theme + ": Popup nennt nicht '100 km gesamt'");
+  // Nutzer-Wunsch (24.07.2026, Nachfrage nach Item 7/8): das Popup soll die echte Hexagon-Medaille zeigen,
+  // nicht nur irgendein Icon — HexMedal ist an ihrem abgerundeten Hexagon-clip-path (hexClip -> "path(...")
+  // eindeutig zu erkennen, das unterscheidet sie von der alten generischen Kreis-Variante.
+  const hasHexMedal = await popup.evaluate((el) => [...el.querySelectorAll("div")].some((d) => (d.style.clipPath || "").startsWith("path(")));
+  if (!hasHexMedal) problems.push(theme + ": v7.21 — Popup zeigt keine echte Hexagon-Medaille (HexMedal), nur ein einfaches Icon");
+  // Metric-Banderole der Medaille zeigt "100" (b.target der 100-km-Schwelle), nicht nur den Titeltext.
+  if (!(await popup.locator("text=/^100$/").count())) problems.push(theme + ": v7.21 — Medaillen-Banderole zeigt nicht die Zielzahl '100'");
   await shot("40-popup-meilenstein-ausserhalb-start-tab");
   await page.getByRole("button", { name: "Stark! Weiter", exact: true }).click();
   await page.waitForTimeout(400);
