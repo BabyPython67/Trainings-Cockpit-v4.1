@@ -431,7 +431,10 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
 }
 const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode, overrides) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).reduce((s, d) => s + d.load, 0);
 function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
-  const out = { run: 0, vb: 0, strength: 0 };
+  // v7.18: "sonstige" (customLog, manuelle Aktivitäten) hier nur als Schlüssel mitgeführt (Formgleichheit
+  // mit dayLoadBySport) — diese Funktion liest ausschließlich buildWeekPlan-Items, customLog läuft nie
+  // durch buildWeekPlan und bleibt hier bewusst 0; die Wochenrhythmus-Karte summiert customLog separat.
+  const out = { run: 0, vb: 0, strength: 0, sonstige: 0 };
   buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
   return out;
 }
@@ -465,8 +468,11 @@ function migrateDone(done) {
 // bestehende) gewann zufällig die zuerst im Array stehende, die andere verschwand farblich komplett,
 // obwohl der Tooltip beide korrekt auflistete. Liefert stattdessen die Last je Sportart für gestapelte
 // Balken-Segmente (wie schon bei weekLoadBySport/den Plan-vs-Ist-Charts) — keine Sportart geht mehr unter.
+// v7.18: "sonstige" (customLog, manuelle Aktivitäten ohne Plan-Slot) als vierter Schlüssel — items können
+// hierfür synthetische Einträge {sport:"sonstige", load} enthalten (siehe WeekRhythm), buildWeekPlan selbst
+// erzeugt nie sport:"sonstige".
 function dayLoadBySport(items) {
-  const out = { vb: 0, run: 0, strength: 0 };
+  const out = { vb: 0, run: 0, strength: 0, sonstige: 0 };
   items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; });
   return out;
 }
@@ -527,7 +533,13 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [] };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [], customLog: [] };
+// v7.18: generische Aktivität — Kategorien fürs spätere Filtern ("alle Tests anzeigen"), plus RPE(1-5)->⚡-
+// Zuordnung (grob, da bei manuellen Einträgen kein exakter Sport-Wert vorliegt). Ohne RPE-Angabe: 0⚡
+// (rein informativer Eintrag ohne Last).
+const CUSTOM_CATEGORIES = [["reaktivierung", "Reaktivierung"], ["test", "Test"], ["zusatz", "Zusatzeinheit"], ["sonstiges", "Sonstiges"]];
+const CUSTOM_RPE_LOAD = { 1: 1, 2: 2, 3: 4, 4: 6, 5: 7 };
+const MANUAL_SPORT = { label: "Sonstige/Manuell", color: "#a855f7", tint: "#faf5ff", deep: "#7e22ce", bright: "#c084fc" };
 const hasStorage = typeof window !== "undefined" && window.storage;
 function usePersistentData() {
   const [data, setData] = useState(DEFAULT_DATA);
@@ -590,6 +602,8 @@ const Stat = ({ label, value, unit, accent, icon }) => (
 /* ==== Belastungspunkte: Erklärung + Tooltip-Inhalt (⚡-System verständlich machen) ==== */
 function LoadHelp() {
   const [open, setOpen] = useState(false);
+  // v7.18: "Sonstige Aktivität" absichtlich ohne festen Punktwert (hängt vom eingetragenen RPE ab, s. CUSTOM_RPE_LOAD) —
+  // stattdessen ein eigener Hinweistext unten, sonst müsste diese Duplikat-Tabelle bei jeder RPE-Stufe einzeln aufgeführt werden.
   const rows = [["Volleyball", "6"], ["Turnier / 5K-Test", "9"], ["Laufen Easy", "3"], ["Laufen Tempo / Langer Lauf", "6"], ["Laufen Intervalle", "7"], ["Kraft Mobility", "1"], ["Kraft Oberkörper", "3–4"], ["Kraft Beine / Power", "5"]];
   return (
     <div>
@@ -603,35 +617,43 @@ function LoadHelp() {
             {rows.map(([l, v]) => <React.Fragment key={l}><span>{l}</span><span className="text-right">{v}</span></React.Fragment>)}
           </div>
           <div className="mt-1.5 text-slate-500">Die Summe pro Tag/Woche zeigt, wie viel zusammenkommt — nützlich zum Vergleichen, nicht zum Abzählen von Minuten.</div>
+          <div className="mt-1 text-slate-500">Sonstige Aktivität: grob aus der Anstrengung (RPE 1–5) geschätzt — {[1, 2, 3, 4, 5].map((r) => `${r}→${CUSTOM_RPE_LOAD[r]}`).join(", ")}⚡. Ohne RPE-Angabe: 0⚡ (rein informativ).</div>
         </div>
       )}
     </div>
   );
 }
-function WeekRhythm({ plan, week, highlightToday }) {
+function WeekRhythm({ plan, week, highlightToday, customLog }) {
   const dark = useDark();
   const monday = mondayOfWeek(week);
   // v7.0: ausgefallene Einheiten (load 0, aber originalLoad>0) sollen sich sichtbar von einem echten
   // Ruhetag unterscheiden — bisher wurden beide identisch als leere graue Säule dargestellt.
-  const STACK = ["vb", "run", "strength"]; // v7.13: je Sportart ein gestapeltes Segment statt einer "gewinnt alles"-Farbe
+  const STACK = ["vb", "run", "strength", "sonstige"]; // v7.13: je Sportart ein gestapeltes Segment; v7.18: + manuelle Aktivitäten
   const data = plan.map((d, i) => {
     const date = new Date(monday.getTime() + i * DAY_MS);
-    const cancelledLoad = d.items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
+    const iso = toLocalISO(date);
+    // v7.18: customLog läuft nie durch buildWeekPlan (kein Plan-Slot) — hier zu synthetischen
+    // sport:"sonstige"-Items für den Tag ergänzt, BEVOR dayLoadBySport/Summen berechnet werden, sonst
+    // exakt dieselbe "unsichtbare neue Last-Kategorie"-Fehlerklasse wie beim v7.14-Fix.
+    const customItems = (customLog || []).filter((c) => c.date === iso).map((c) => ({ sport: "sonstige", label: c.label, load: c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0, custom: true }));
+    const items = customItems.length ? [...d.items, ...customItems] : d.items;
+    const load = d.load + customItems.reduce((s, c) => s + c.load, 0);
+    const cancelledLoad = items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
     // v7.17: "körperlich nicht bereit"/"krank" pro Einheit — eigenes 0-Last-Segment, von "Ausgefallen"
     // farblich/im Muster unterscheidbar (sonst exakt die v7.14-Fehlerklasse: neue 0-Last-Kategorie
     // verschwindet optisch, obwohl der Tooltip sie korrekt auflisten würde).
-    const excusedItems = d.items.filter((it) => it.excused);
+    const excusedItems = items.filter((it) => it.excused);
     const excusedLoad = excusedItems.reduce((s, it) => s + (it.originalLoad || 0), 0);
     const excuseTypes = new Set(excusedItems.map((it) => it.excuseType));
     const excuseKind = excuseTypes.size === 1 ? [...excuseTypes][0] : excuseTypes.size > 1 ? "mixed" : null;
-    const cancelledOnly = d.load === 0 && cancelledLoad > 0;
-    const excusedOnly = d.load === 0 && !cancelledOnly && excusedLoad > 0;
-    const bySport = dayLoadBySport(d.items);
+    const cancelledOnly = load === 0 && cancelledLoad > 0;
+    const excusedOnly = load === 0 && !cancelledOnly && excusedLoad > 0;
+    const bySport = dayLoadBySport(items);
     // v7.14-Fix: die abgerundete Oberkante gehört dem jeweils OBERSTEN Segment MIT Wert an diesem Tag —
     // fest an "strength" (letztes Stack-Glied) zu koppeln ließ z. B. einen reinen Volleyball-Tag eckig
     // aussehen, weil Kraft dort 0 ist und die Rundung so ins Leere lief.
     const topSeg = cancelledOnly ? "cancelledBar" : excusedOnly ? "excusedBar" : [...STACK].reverse().find((s) => bySport[s] > 0) || null;
-    return { day: d.day, load: d.load, cancelledLoad, cancelledOnly, cancelledBar: cancelledOnly ? cancelledLoad : 0, excusedLoad, excusedOnly, excuseKind, excusedBar: excusedOnly ? excusedLoad : 0, topSeg, ...bySport, items: d.items, isToday: highlightToday && isSameDay(date, new Date()) };
+    return { day: d.day, load, cancelledLoad, cancelledOnly, cancelledBar: cancelledOnly ? cancelledLoad : 0, excusedLoad, excusedOnly, excuseKind, excusedBar: excusedOnly ? excusedLoad : 0, topSeg, ...bySport, items, isToday: highlightToday && isSameDay(date, new Date()) };
   });
   const avg = Math.round((data.reduce((s, d) => s + d.load, 0) / 7) * 10) / 10;
   return (
@@ -651,12 +673,19 @@ function WeekRhythm({ plan, week, highlightToday }) {
             const works = (d.items || []).filter((i) => i.load > 0);
             const cancelled = (d.items || []).filter((i) => i.cancelled);
             const excused = (d.items || []).filter((i) => i.excused);
+            // v7.18: manuelle Aktivitäten ohne RPE (⚡0) fallen aus dem load>0-Filter oben raus — ohne
+            // diesen Zweig verschwänden sie komplett aus dem Tooltip, obwohl sie geloggt wurden.
+            const zeroCustom = (d.items || []).filter((i) => i.custom && !(i.load > 0));
             let text = "Ruhetag";
-            if (works.length) { const t = works.map((i) => `${i.label} ⚡${i.load}`).join(" + "); text = works.length > 1 ? `${t} · Gesamt ⚡${d.load}` : t; }
-            else if (cancelled.length || excused.length) {
+            if (works.length) {
+              const t = works.map((i) => `${i.label} ⚡${i.load}`).join(" + ");
+              text = works.length > 1 ? `${t} · Gesamt ⚡${d.load}` : t;
+              if (zeroCustom.length) text += ` + ${zeroCustom.map((i) => `${i.label} (ohne RPE)`).join(" + ")}`;
+            } else if (cancelled.length || excused.length || zeroCustom.length) {
               const parts = [];
               if (cancelled.length) parts.push(cancelled.map((i) => `${i.label} — ausgefallen, zählt nicht`).join(" + "));
               if (excused.length) parts.push(excused.map((i) => `${i.label} — entschuldigt (${i.excuseType === "koerperlich_nicht_bereit" ? "körperlich nicht bereit" : "krank"})`).join(" + "));
+              if (zeroCustom.length) parts.push(zeroCustom.map((i) => `${i.label} (ohne RPE, ⚡0)`).join(" + "));
               text = parts.join(" + ");
             }
             return (
@@ -668,7 +697,7 @@ function WeekRhythm({ plan, week, highlightToday }) {
           }}
         />
         {STACK.map((s, si) => (
-          <Bar key={s} dataKey={s} stackId="wr" fill={SPORT[s].color} maxBarSize={26}>
+          <Bar key={s} dataKey={s} stackId="wr" fill={(SPORT[s] || MANUAL_SPORT).color} maxBarSize={26}>
             {data.map((d, i) => <Cell key={i} radius={d.topSeg === s ? [4, 4, 0, 0] : [0, 0, 0, 0]} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}
             {si === STACK.length - 1 && <LabelList dataKey={s} content={({ x, y, width, index }) => {
               const d = data[index];
@@ -1112,8 +1141,12 @@ function useUndoDelete(setData) {
 }
 function UndoToast({ undo, onUndo }) {
   if (!undo) return null;
+  // v7.18-Fix: bottom war "1rem" — die fixe BottomTabBar (ebenfalls z-30, im DOM NACH dem Toast, gewinnt
+  // also die Stapelreihenfolge bei gleichem z-index) hat selbst ~84px Höhe (s. <main>-Padding im App-Root)
+  // und lag damit optisch/klickbar über dem Toast. Betraf JEDE Lösch-Aktion mit Undo (Kraft/Lauf/Recovery/
+  // Schule/generische Aktivität), nicht nur eine einzelne Stelle — deshalb hier zentral statt pro Aufrufer gefixt.
   return (
-    <div className="fixed left-1/2 -translate-x-1/2 z-30 rounded-xl bg-slate-900 text-white text-xs font-semibold px-4 py-3 flex items-center gap-4 shadow-lg" style={{ bottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}>
+    <div className="fixed left-1/2 -translate-x-1/2 z-40 rounded-xl bg-slate-900 text-white text-xs font-semibold px-4 py-3 flex items-center gap-4 shadow-lg" style={{ bottom: "calc(84px + env(safe-area-inset-bottom, 0px))" }}>
       <span>{undo.label} gelöscht</span>
       <button onClick={onUndo} className="text-emerald-300 font-bold">Rückgängig</button>
     </div>
@@ -1780,9 +1813,10 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
             </span>
           )}
         </div>
-        <WeekRhythm plan={plan} week={currentWeek} highlightToday />
+        <WeekRhythm plan={plan} week={currentWeek} highlightToday customLog={data.customLog} />
         <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
           {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: MANUAL_SPORT.color }} /> {MANUAL_SPORT.label}</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-slate-400" /> Ausgefallen</span>
           {/* v7.17: eigene Entschuldigen-Kategorie, farblich von "Ausgefallen" unterschieden */}
@@ -2152,8 +2186,8 @@ function ProgressTab({ data, setData, currentWeek, initialSub }) {
   const [sub, setSub] = useState(initialSub || "run"); // v7.8: Schnelleintrag kann direkt auf "Kraft" vorwählen
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">{[["run", "Laufzeiten", "#6366f1"], ["strength", "Kraftwerte", "#0d9488"]].map(([k, l, c]) => <button key={k} onClick={() => setSub(k)} className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold border transition ${sub === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={sub === k ? { background: c } : {}}>{l}</button>)}</div>
-      {sub === "run" ? <RunProgress data={data} setData={setData} currentWeek={currentWeek} /> : <StrengthProgress data={data} setData={setData} />}
+      <div className="flex gap-2">{[["run", "Laufzeiten", "#6366f1"], ["strength", "Kraftwerte", "#0d9488"], ["custom", "Sonstiges", MANUAL_SPORT.color]].map(([k, l, c]) => <button key={k} onClick={() => setSub(k)} className={`flex-1 rounded-xl px-3 py-2.5 text-sm font-semibold border transition ${sub === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={sub === k ? { background: c } : {}}>{l}</button>)}</div>
+      {sub === "run" ? <RunProgress data={data} setData={setData} currentWeek={currentWeek} /> : sub === "strength" ? <StrengthProgress data={data} setData={setData} /> : <CustomActivityProgress data={data} setData={setData} />}
     </div>
   );
 }
@@ -2624,13 +2658,16 @@ function TypeProgressCharts({ series, target, hrTarget }) {
 function RunProgress({ data, setData, currentWeek }) {
   const dark = useDark();
   const [type, setType] = useState("int");
-  const [form, setForm] = useState(() => ({ date: todayISO(), type: plannedRunFor(todayISO(), data.illnessLog, data.planEndMode)?.type ?? "int", dist: "", time: "", typeTouched: false })); // v3.3: Typ aus Plan vorbelegt
+  const [form, setForm] = useState(() => ({ date: todayISO(), type: plannedRunFor(todayISO(), data.illnessLog, data.planEndMode)?.type ?? "int", dist: "", time: "", typeTouched: false, label: "", resultNote: "" })); // v3.3: Typ aus Plan vorbelegt
   const [importMsg, setImportMsg] = useState(null);
   const [pending, setPending] = useState(null); // Vorschau eines erkannten Einzellaufs, wartet auf Datums-Bestätigung
   const [openRun, setOpenRun] = useState(null); // welcher Lauf hat seine Splits aufgeklappt
   const fileRef = useRef(null);
 
-  const add = () => { const sec = parseTimeToSec(form.time), dist = Number(String(form.dist).replace(",", ".")); if (!sec || !dist) return; setData((d) => ({ ...d, runLog: [...d.runLog, { id: uid(), date: form.date, type: form.type, dist, sec, pace: sec / dist }] })); setForm((f) => ({ ...f, dist: "", time: "", typeTouched: false, type: plannedRunFor(f.date, data.illnessLog, data.planEndMode)?.type ?? "int" })); }; // typeTouched wird nicht gespeichert; nach Add erneut aus Plan vorbelegen
+  // v7.18: label/resultNote optional — für Läufe ohne Plan-Bezug (Reaktivierung, Test) eine Kennzeichnung,
+  // damit sie nicht kommentarlos in der normalen Pace-Statistik des Lauftyps verschwinden. Rein informativ,
+  // fließen bewusst NICHT in pbs/predData/economySeries ein (die bucketn ohnehin schon nach form.type).
+  const add = () => { const sec = parseTimeToSec(form.time), dist = Number(String(form.dist).replace(",", ".")); if (!sec || !dist) return; setData((d) => ({ ...d, runLog: [...d.runLog, { id: uid(), date: form.date, type: form.type, dist, sec, pace: sec / dist, ...(form.label.trim() ? { label: form.label.trim() } : {}), ...(form.resultNote.trim() ? { resultNote: form.resultNote.trim() } : {}) }] })); setForm((f) => ({ ...f, dist: "", time: "", label: "", resultNote: "", typeTouched: false, type: plannedRunFor(f.date, data.illnessLog, data.planEndMode)?.type ?? "int" })); }; // typeTouched wird nicht gespeichert; nach Add erneut aus Plan vorbelegen
   const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
   const remove = (id) => {
     const item = data.runLog.find((r) => r.id === id);
@@ -2908,6 +2945,9 @@ function RunProgress({ data, setData, currentWeek }) {
           ); })()}
           <input inputMode="decimal" placeholder="Distanz (km)" value={form.dist} onChange={(e) => setForm({ ...form, dist: e.target.value })} className="tc-input" />
           <input inputMode="numeric" placeholder="Zeit (mm:ss)" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} className="tc-input font-num" />
+          {/* v7.18: optional, für Läufe ohne Plan-Bezug (Reaktivierung, 800m-Test) */}
+          <input placeholder="Label (optional, z. B. „Reaktivierung“)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input col-span-2" />
+          <input placeholder="Ergebnis/Notiz (optional, z. B. Testzeit)" value={form.resultNote} onChange={(e) => setForm({ ...form, resultNote: e.target.value })} className="tc-input col-span-2" />
         </div>
         <button onClick={add} className="mt-3 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
@@ -2966,6 +3006,13 @@ function RunProgress({ data, setData, currentWeek }) {
               {hasLaps && <button onClick={() => setOpenRun(isOpen ? null : r.id)} className="text-slate-400 p-1 shrink-0"><ChevronDown size={14} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
               <button onClick={() => remove(r.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
             </div>
+            {/* v7.18: Label/Ergebnis-Notiz für Läufe ohne Plan-Bezug (Reaktivierung, Test) — rein informativ */}
+            {(r.label || r.resultNote) && (
+              <div className="px-4 pb-1.5 -mt-1.5 text-[10.5px] text-violet-600 flex flex-wrap gap-x-2">
+                {r.label && <span className="font-semibold">{r.label}</span>}
+                {r.resultNote && <span className="text-slate-500">{r.resultNote}</span>}
+              </div>
+            )}
             {/* v6.4: bei aufgeklappter Runde liefert SplitsChart bereits präzisere Kennzahlen zum selben
                Lauf (Arbeits-Pace/Ziel-Chips/Drift) — die generische Übersichts-Zeile hier würde nur
                gestapelte, redundante Kopf-Chips erzeugen (Feedback: "voll/unübersichtlich"). */}
@@ -3068,6 +3115,77 @@ function StrengthProgress({ data, setData }) {
           <button onClick={() => remove(s.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
         </div>
       ))}</Card>}
+      <UndoToast undo={undo} onUndo={doUndo} />
+    </div>
+  );
+}
+
+/* ==== v7.18: generische Aktivität — Einheiten ohne Plan-Slot (Reaktivierungs-Läufe, Tests, spontane
+   Zusatzeinheiten) unabhängig vom Trainingsplan loggen. Bewusst eigenständiges customLog[] statt an eine
+   Plan-uid gekoppelt (kein Override) — analog zu StrengthProgress im Aufbau (Formular + Liste +
+   useUndoDelete), aber ohne Bezug zu Übungsnamen/Bestwerten. ==== */
+function CustomActivityProgress({ data, setData }) {
+  const dark = useDark();
+  const [form, setForm] = useState({ date: todayISO(), label: "", category: "sonstiges", durationMin: "", rpe: "", note: "" });
+  const [filterCat, setFilterCat] = useState("all");
+  const add = () => {
+    if (!form.label.trim()) return;
+    setData((d) => ({ ...d, customLog: [...d.customLog, {
+      id: uid(), date: form.date, label: form.label.trim(), category: form.category,
+      ...(form.durationMin ? { durationMin: Number(form.durationMin) || 0 } : {}),
+      ...(form.rpe ? { rpe: Number(form.rpe) } : {}),
+      ...(form.note.trim() ? { note: form.note.trim() } : {}),
+    }] }));
+    setForm((f) => ({ ...f, label: "", durationMin: "", rpe: "", note: "" }));
+  };
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const remove = (id) => {
+    const item = data.customLog.find((c) => c.id === id);
+    setData((d) => ({ ...d, customLog: d.customLog.filter((c) => c.id !== id) }));
+    if (item) triggerUndo("Eintrag", "customLog", item);
+  };
+  const catLabel = (k) => CUSTOM_CATEGORIES.find(([kk]) => kk === k)?.[1] || k;
+  const list = [...data.customLog].filter((c) => filterCat === "all" || c.category === filterCat).sort((a, b) => b.date.localeCompare(a.date));
+  return (
+    <div className="space-y-4">
+      <Card className="p-4" style={panel(dark, MANUAL_SPORT.color, MANUAL_SPORT.tint, "#e9d5ff")}>
+        <div className="flex items-start gap-2"><Info size={15} className="mt-0.5 shrink-0" style={{ color: safeText(dark, MANUAL_SPORT.color) }} /><p className="text-xs leading-relaxed" style={{ color: safeText(dark, MANUAL_SPORT.deep) }}><b>Für alles, was zu keinem Plan-Slot gehört</b> — Reaktivierungs-Läufe, ein Kalibrierungs-Test, eine spontane Zusatzeinheit. Für normale Läufe nach Plan bitte weiter „Laufzeiten" nutzen.</p></div>
+      </Card>
+      <Card className="p-4"><Eyebrow>Aktivität eintragen</Eyebrow>
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
+          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input col-span-2" />
+          <input placeholder="Was war das? (z. B. 800m-Test)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input col-span-2" />
+          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="tc-input col-span-2">{CUSTOM_CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          <input inputMode="numeric" placeholder="Dauer (Min., optional)" value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: e.target.value })} className="tc-input font-num" />
+          <select value={form.rpe} onChange={(e) => setForm({ ...form, rpe: e.target.value })} className="tc-input" aria-label="Anstrengung (RPE)"><option value="">RPE (optional)</option>{[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} — {CUSTOM_RPE_LOAD[r]}⚡</option>)}</select>
+          <input placeholder="Notiz (optional, z. B. Ergebnis)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input col-span-2" />
+        </div>
+        <button onClick={add} className="mt-3 w-full rounded-xl text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5" style={{ background: MANUAL_SPORT.color }}><Plus size={16} /> Hinzufügen</button>
+      </Card>
+      {data.customLog.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {[["all", "Alle"], ...CUSTOM_CATEGORIES].map(([k, l]) => (
+            <button key={k} onClick={() => setFilterCat(k)} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold border transition ${filterCat === k ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={filterCat === k ? { background: MANUAL_SPORT.color } : {}}>{l}</button>
+          ))}
+        </div>
+      )}
+      {list.length > 0 ? (
+        <Card className="divide-y divide-slate-100">{list.map((c) => (
+          <div key={c.id} className="flex items-start gap-3 px-4 py-2.5">
+            <span className="text-[11px] text-slate-400 font-num w-12 shrink-0 mt-0.5">{fmtISOshort(c.date)}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-slate-700">{c.label}</span>
+                <span className="text-[10px] font-semibold rounded px-1.5 py-0.5" style={{ color: safeText(dark, MANUAL_SPORT.deep), background: softBg(dark, MANUAL_SPORT.color, MANUAL_SPORT.tint) }}>{catLabel(c.category)}</span>
+              </div>
+              <div className="text-[11px] text-slate-500 mt-0.5">{[c.durationMin ? `${c.durationMin} Min` : null, c.rpe ? `RPE ${c.rpe} · ${CUSTOM_RPE_LOAD[c.rpe]}⚡` : null, c.note].filter(Boolean).join(" · ")}</div>
+            </div>
+            <button onClick={() => remove(c.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
+          </div>
+        ))}</Card>
+      ) : data.customLog.length > 0 ? (
+        <div className="py-6 text-center text-xs text-slate-400">Keine Einträge in dieser Kategorie.</div>
+      ) : null}
       <UndoToast undo={undo} onUndo={doUndo} />
     </div>
   );
@@ -4320,6 +4438,7 @@ const MEHR_ITEMS = [
 const QUICK_ADD_ITEMS = [
   { id: "run", label: "Lauf protokollieren", icon: Mountain, screen: "fortschritt", sub: "run" },
   { id: "strength", label: "Kraft protokollieren", icon: Dumbbell, screen: "fortschritt", sub: "strength" },
+  { id: "custom", label: "Sonstige Aktivität eintragen", icon: Sparkles, screen: "fortschritt", sub: "custom" },
   { id: "kcal", label: "Kcal eintragen", icon: Utensils, screen: "kcal" },
   { id: "recovery", label: "Recovery-Check-in", icon: Moon, screen: "recovery" },
   { id: "schule", label: "Hausaufgabe/Klausur", icon: GraduationCap, screen: "schule" },
@@ -4562,7 +4681,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.17` : "Fortschritt wird automatisch gespeichert · v7.17"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.18` : "Fortschritt wird automatisch gespeichert · v7.18"}</span>
           </footer>
         </main>
       </div>
