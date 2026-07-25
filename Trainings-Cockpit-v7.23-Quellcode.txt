@@ -2359,8 +2359,14 @@ function isSetFilled(type, set) {
 }
 function numifySet(type, set) {
   const n = (v) => (v === "" || v === undefined ? 0 : Number(v));
-  if (type === "weight") return { kg: n(set.kg), reps: n(set.reps), pause: n(set.pause) };
-  if (type === "reps") return { reps: n(set.reps), extraKg: n(set.extraKg), pause: n(set.pause) };
+  // v7.23-Fix: kg/extraKg kommen über eine Dezimaltastatur (inputMode="decimal") — auf iPhones mit
+  // deutscher Systemsprache liefert die dafür ein Komma statt eines Punkts ("21,3"), das ein simples
+  // Number(v) als NaN liest. parseNumberLoose (schon für den CSV-Import da) versteht beides; zusätzlich
+  // auf eine Nachkommastelle gerundet (Gewichtsplatten sind ohnehin 0,5/1,25kg-Schritte) — deckelt damit
+  // an der Quelle jede lange Nachkommazahl, die sonst die dichte Historie-/Zuletzt-Anzeige vollstopfen würde.
+  const nKg = (v) => (v === "" || v === undefined ? 0 : Math.round(parseNumberLoose(v) * 10) / 10);
+  if (type === "weight") return { kg: nKg(set.kg), reps: n(set.reps), pause: n(set.pause) };
+  if (type === "reps") return { reps: n(set.reps), extraKg: nKg(set.extraKg), pause: n(set.pause) };
   if (type === "time") return { seconds: n(set.seconds), pause: n(set.pause) };
   if (type === "distance") return { cm: n(set.cm) };
   return {};
@@ -3444,8 +3450,17 @@ function StrEntryForm({ log, typeMemory, editEntry, onSave, onCancelEdit, onDele
     if (!trimmed) return;
     const cleaned = sets.filter((s) => isSetFilled(type, s)).map((s) => numifySet(type, s));
     if (!cleaned.length) return;
-    if (isEdit) onSave({ ...editEntry, exercise: trimmed, type, sets: cleaned });
-    else onSave({ id: uid(), date: todayISO(), exercise: trimmed, type, sets: cleaned });
+    if (isEdit) {
+      onSave({ ...editEntry, exercise: trimmed, type, sets: cleaned });
+    } else {
+      // v7.23-Fix: nach einer Neuanlage muss das Formular leeren — sonst tippt "Übung speichern" erneut
+      // dieselben Werte ein zweites Mal ab (versehentlicher Duplikat-Eintrag). Im Bearbeiten-Modus
+      // übernimmt das bereits der useEffect oben, sobald StrengthProgress editEntry nach dem Speichern
+      // wieder auf null setzt — hier (Neuanlage, editEntry bleibt durchgehend null) muss es explizit passieren.
+      onSave({ id: uid(), date: todayISO(), exercise: trimmed, type, sets: cleaned });
+      setName("");
+      applyType("weight");
+    }
   }
 
   const trimmedName = name.trim();
@@ -5325,7 +5340,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.22` : "Fortschritt wird automatisch gespeichert · v7.22"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.23` : "Fortschritt wird automatisch gespeichert · v7.23"}</span>
           </footer>
         </main>
       </div>
