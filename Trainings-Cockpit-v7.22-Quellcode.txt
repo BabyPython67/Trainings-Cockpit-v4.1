@@ -10,6 +10,7 @@ import {
   Trash2, Heart, RotateCcw, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
   GraduationCap, Thermometer, Pencil, Calendar, Award, Star, MoreHorizontal,
+  Repeat, Timer, Ruler,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -554,6 +555,8 @@ function usePersistentData() {
           let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) };
           const mig = migrateDone(next.done);
           if (mig.changed) next = { ...next, done: mig.done };
+          const strMig = migrateStrengthLog(next.strengthLog);
+          if (strMig.changed) next = { ...next, strengthLog: strMig.log };
           setData(next); setSavedAt(new Date());
         }
       } catch (_) {} }
@@ -2007,11 +2010,25 @@ function StrengthQuickLog({ item, setData }) {
   const [form, setForm] = useState({ exercise: names[0] || "", weight: "", reps: "" });
   const [saved, setSaved] = useState(false);
   const timer = useRef(null);
+  // v7.22: schreibt jetzt {type:"weight", sets:[...]} statt des alten weight/reps/sets-Schemas — reine
+  // Gewicht-Schnelleingabe ohne Typ-Umschalter (der volle Formular-Flow in Kraftwerte deckt die anderen
+  // 3 Typen ab). Mehrfaches Speichern derselben Übung am selben Tag hängt an denselben Eintrag an statt
+  // Duplikate anzulegen — konsistent mit "ein Eintrag = eine Übung an einem Tag" im Rest des Kraft-Logs.
   const save = () => {
     const w = Number(String(form.weight).replace(",", "."));
     const reps = Number(form.reps);
     if (!form.exercise || (!w && !reps)) return;
-    setData((d) => ({ ...d, strengthLog: [...d.strengthLog, { id: uid(), date: todayISO(), exercise: form.exercise, weight: w || 0, reps: reps || 0, sets: 0 }] }));
+    const newSet = { kg: w || 0, reps: reps || 0, pause: "" };
+    setData((d) => {
+      const today = todayISO();
+      const idx = d.strengthLog.findIndex((e) => e.date === today && e.type === "weight" && e.exercise.trim().toLowerCase() === form.exercise.trim().toLowerCase());
+      if (idx >= 0) {
+        const next = [...d.strengthLog];
+        next[idx] = { ...next[idx], sets: [...next[idx].sets, newSet] };
+        return { ...d, strengthLog: next };
+      }
+      return { ...d, strengthLog: [...d.strengthLog, { id: uid(), date: today, exercise: form.exercise, type: "weight", sets: [newSet] }] };
+    });
     setForm((f) => ({ ...f, weight: "", reps: "" }));
     setSaved(true);
     clearTimeout(timer.current);
@@ -2253,6 +2270,156 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
 const RUN_OPTS = [["int", "Intervalle"], ["tempo", "Tempo"], ["easy", "Easy"], ["long", "Langer Lauf"], ["test", "5 km Test"]];
 const BASELINE = ["Kniebeuge (5 Wdh.)", "Kreuzheben/RDL (5 Wdh.)", "Bankdrücken (5 Wdh.)", "Klimmzüge (max.)", "Schulterdrücken (8 Wdh.)", "Plank (Sek.)", "Sprunghöhe (cm)"];
 
+/* ===================== v7.22: Kraftprotokollierung-Neuentwurf =====================
+   Jede Übung bekommt pro Eintrag einen von vier Typen (nicht fix an den Namen gebunden, aber mit
+   zuletzt genutztem Typ vorbelegt); ein Eintrag ist eine Übung an einem Tag mit einer Satz-Liste
+   statt einem einzelnen Gewicht/Wdh.-Paar. Details/Herkunft: claude-memory Update-Punkt
+   "Kraftlog-Neuentwurf", mit Mirko als interaktives Artefakt abgestimmt. */
+const STR_TYPES = {
+  weight:   { label: "Gewicht + Wdh.", short: "Gewicht", icon: Dumbbell, color: "#0d9488" },
+  reps:     { label: "Nur Wdh.",       short: "Wdh.",    icon: Repeat,   color: "#7c3aed" },
+  time:     { label: "Zeit",           short: "Zeit",    icon: Timer,    color: "#ea580c" },
+  distance: { label: "Distanz/Höhe",   short: "Distanz", icon: Ruler,    color: "#2563eb" },
+};
+const STR_TYPE_ORDER = ["weight", "reps", "time", "distance"];
+// Typ-Vorbelegung der 7 Baseline-Übungen, abgeleitet aus deren Klammer-Hinweisen oben.
+const SEED_TYPES = {
+  "Kniebeuge": "weight", "Kreuzheben/RDL": "weight", "Bankdrücken": "weight", "Schulterdrücken": "weight",
+  "Klimmzüge": "reps", "Plank": "time", "Sprunghöhe": "distance",
+};
+function strFormatSeconds(s) {
+  const sec = Math.round(s);
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`;
+}
+function strFormatSetValue(type, set) {
+  switch (type) {
+    // set.reps kann bei migrierten Alt-Einträgen ohne Wdh.-Feld 0 sein — "60kg×0" läse sich wie
+    // "0 Wiederholungen geschafft" statt "unbekannt", deshalb dann nur das Gewicht zeigen.
+    case "weight": return set.reps ? `${set.kg}kg×${set.reps}` : `${set.kg}kg`;
+    case "reps": return set.extraKg ? `${set.reps}× (+${set.extraKg}kg)` : `${set.reps}×`;
+    case "time": return strFormatSeconds(set.seconds);
+    case "distance": return `${set.cm}cm`;
+    default: return "–";
+  }
+}
+// Wert desselben Satz-Index (1., 2., 3. ...) für dieselbe Übung aus dem letzten Log-Eintrag davor —
+// reine Vergleichsanzeige ("Zuletzt"-Spalte), kein Autofill. excludeId blendet im Bearbeiten-Modus
+// den gerade bearbeiteten Eintrag selbst aus.
+function getZurueckValue(log, exerciseName, setIndex, excludeId) {
+  if (!exerciseName || !exerciseName.trim()) return null;
+  const name = exerciseName.trim().toLowerCase();
+  const prior = log
+    .filter((e) => e.id !== excludeId && e.exercise.trim().toLowerCase() === name)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  for (const entry of prior) { if (entry.sets[setIndex]) return { set: entry.sets[setIndex], date: entry.date }; }
+  return null;
+}
+function strMetricValue(type, set) {
+  if (type === "weight") return set.kg;
+  if (type === "reps") return set.reps;
+  if (type === "time") return set.seconds;
+  if (type === "distance") return set.cm;
+}
+function strTopSet(entry) {
+  if (!entry.sets.length) return null;
+  if (entry.type === "weight") return entry.sets.reduce((best, s) => (!best || s.kg > best.kg || (s.kg === best.kg && s.reps > best.reps)) ? s : best, null);
+  const key = (s) => strMetricValue(entry.type, s);
+  return entry.sets.reduce((best, s) => (!best || key(s) > key(best)) ? s : best, null);
+}
+function strVolume(entry) {
+  if (entry.type === "weight") return entry.sets.reduce((sum, s) => sum + s.kg * s.reps, 0);
+  if (entry.type === "reps") return entry.sets.reduce((sum, s) => sum + s.reps, 0);
+  if (entry.type === "time") return entry.sets.reduce((sum, s) => sum + s.seconds, 0);
+  return null;
+}
+function strAllTimeBest(log, exerciseName) {
+  const name = exerciseName.trim().toLowerCase();
+  const entries = log.filter((e) => e.exercise.trim().toLowerCase() === name);
+  if (!entries.length) return null;
+  // Falls derselbe Übungsname je den Typ gewechselt hat (selten, aber durch Freitext möglich): nur gegen
+  // den zuletzt genutzten Typ vergleichen, sonst würden z.B. kg-Werte gegen Wdh.-Zahlen verglichen.
+  const currentType = [...entries].sort((a, b) => b.date.localeCompare(a.date))[0].type;
+  let best = null;
+  entries.forEach((e) => {
+    if (e.type !== currentType) return;
+    const top = strTopSet(e);
+    if (!top) return;
+    const val = strMetricValue(e.type, top);
+    if (best === null || val > best.val) best = { val, set: top, date: e.date, type: e.type };
+  });
+  return best;
+}
+function isSetFilled(type, set) {
+  if (type === "weight") return set.kg !== "" && set.reps !== "";
+  if (type === "reps") return set.reps !== "";
+  if (type === "time") return set.seconds !== "";
+  if (type === "distance") return set.cm !== "";
+  return false;
+}
+function numifySet(type, set) {
+  const n = (v) => (v === "" || v === undefined ? 0 : Number(v));
+  if (type === "weight") return { kg: n(set.kg), reps: n(set.reps), pause: n(set.pause) };
+  if (type === "reps") return { reps: n(set.reps), extraKg: n(set.extraKg), pause: n(set.pause) };
+  if (type === "time") return { seconds: n(set.seconds), pause: n(set.pause) };
+  if (type === "distance") return { cm: n(set.cm) };
+  return {};
+}
+function emptyStrSet(type) {
+  if (type === "weight") return { kg: "", reps: "", pause: "", done: false };
+  if (type === "reps") return { reps: "", extraKg: "", pause: "", done: false };
+  if (type === "time") return { seconds: "", pause: "", done: false };
+  if (type === "distance") return { cm: "", done: false };
+}
+function prefillStrSet(type, prev) {
+  if (!prev) return emptyStrSet(type);
+  return { ...prev, done: false };
+}
+// Bereits gespeicherte (numerische) Sätze fürs erneute Bearbeiten in editierbare Zeilen zurückverwandeln.
+function toEditableSets(sets) {
+  return sets.map((s) => ({ ...s, done: false }));
+}
+// Einmalige Migration: altes Schema {weight, reps, sets:N} -> neues Schema {type, sets:[...]}. Mehrere
+// alte Einträge desselben Tages + derselben Übung werden zu einem Eintrag mit mehreren Sätzen
+// zusammengeführt (ein alter Eintrag mit sets=N liefert dabei N identische Sätze). Typ zuerst über
+// SEED_TYPES geraten (bekannter Übungsname), erst bei unbekanntem Namen kg>0 -> "weight" sonst "reps" —
+// vermeidet z.B. eine falsche "reps"-Migration für "Plank" nur weil das alte Schema kein Zeit-Feld kannte.
+function migrateStrengthLog(log) {
+  if (!log || !log.length) return { changed: false, log: log || [] };
+  if (!log.some((e) => e.type === undefined)) return { changed: false, log };
+  const seedByLower = {}; Object.entries(SEED_TYPES).forEach(([n, t]) => { seedByLower[n.toLowerCase()] = t; });
+  const groups = {}; const order = [];
+  log.forEach((e) => {
+    if (e.type !== undefined) { const k = `__keep_${e.id}`; groups[k] = { keep: e }; order.push(k); return; }
+    const key = `${e.date}|${(e.exercise || "").trim().toLowerCase()}`;
+    if (!groups[key]) { groups[key] = { date: e.date, exercise: e.exercise, entries: [] }; order.push(key); }
+    groups[key].entries.push(e);
+  });
+  const out = order.map((key) => {
+    const g = groups[key];
+    if (g.keep) return g.keep;
+    const type = seedByLower[(g.exercise || "").trim().toLowerCase()] || (g.entries.some((e) => e.weight > 0) ? "weight" : "reps");
+    const sets = [];
+    g.entries.forEach((e) => {
+      const count = Math.max(1, Number(e.sets) || 1);
+      for (let i = 0; i < count; i++) {
+        let s;
+        // e.weight/e.reps defensiv auf 0 fallen lassen — ganz alte Einträge (z.B. reiner Baseline-Test
+        // ohne Wdh.-Feld) können eines der beiden generischen Felder komplett fehlen lassen (undefined).
+        if (type === "weight") s = { kg: e.weight || 0, reps: e.reps || 0, pause: "" };
+        else if (type === "reps") s = { reps: e.reps || 0, extraKg: e.weight || 0, pause: "" };
+        // "time"/"distance" kamen im alten Schema nie vor (nur über SEED_TYPES erreichbar, z.B. Plank/
+        // Sprunghöhe) — bestmögliche Näherung aus den beiden generischen Alt-Feldern, per Hand nachjustierbar.
+        else if (type === "time") s = { seconds: e.reps || e.weight || 0, pause: "" };
+        else s = { cm: e.reps || e.weight || 0 };
+        sets.push(s);
+      }
+    });
+    return { id: g.entries[0].id, date: g.date, exercise: g.exercise, type, sets };
+  });
+  return { changed: true, log: out };
+}
+
 function ProgressTab({ data, setData, currentWeek, initialSub }) {
   const [sub, setSub] = useState(initialSub || "run"); // v7.8: Schnelleintrag kann direkt auf "Kraft" vorwählen
   return (
@@ -2287,6 +2454,22 @@ function plannedRunFor(dateISO, illnessLog, planEndMode) {
   const plan = __planRunCache[key] || (__planRunCache[key] = buildWeekPlan(week, undefined, undefined, illnessLog, planEndMode));
   const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run" && !i.replacement); // Ersatz-Einheiten haben keinen Plan-Typ
   return run ? { week, day, type: run.type } : null;
+}
+// v7.22: Kraft-Pendant zu plannedRunFor — liefert das Plan-Label der Krafteinheit eines Tages
+// (z.B. "Oberkörper (Aufbau)") für die Historie; kein Treffer (außerhalb Plan-Range oder kein
+// Kraft-Slot an dem Tag) -> null, die Historie zeigt dann "Freies Training".
+const __planStrengthCache = {};
+function plannedStrengthFor(dateISO, illnessLog, planEndMode) {
+  if (!dateISO) return null;
+  const d = new Date(dateISO + "T12:00:00");
+  if (isNaN(d) || atMidnight(d) < PLAN_START) return null;
+  const week = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)) + 1;
+  if (week < 1 || week > planTotalWeeks(illnessLog, planEndMode)) return null;
+  const day = DAYS[(d.getDay() + 6) % 7];
+  const key = `${week}|${lostTrainingWeeks(illnessLog)}|${planEndMode === "dynamic" ? "d" : "f"}`;
+  const plan = __planStrengthCache[key] || (__planStrengthCache[key] = buildWeekPlan(week, undefined, undefined, illnessLog, planEndMode));
+  const item = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "strength");
+  return item ? item.label : null;
 }
 const isQualityType = (t) => t === "int" || t === "tempo" || t === "test";
 // Typ-Zuordnung beim Import: Plan gewinnt, Pace ist nur Fallback.
@@ -3150,89 +3333,432 @@ function RunProgress({ data, setData, currentWeek }) {
     </div>
   );
 }
-function StrengthProgress({ data, setData }) {
+function StrTypeChips({ value, onChange }) {
+  return (
+    <div className="flex gap-1.5 mb-3 flex-wrap">
+      {STR_TYPE_ORDER.map((key) => {
+        const t = STR_TYPES[key];
+        const Icon = t.icon;
+        const active = value === key;
+        return (
+          <button key={key} type="button" onClick={() => onChange(key)}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border transition ${active ? "text-white border-transparent" : "bg-white text-slate-500 border-slate-200"}`}
+            style={active ? { background: t.color } : {}}>
+            <Icon size={13} /> {t.short}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+function StrSetRow({ type, index, set, zurueck, onChange, onRemove, showExtraWeight }) {
+  const patch = (p) => onChange(index, { ...set, ...p });
+  const inputCls = "tc-input text-center font-num";
+  return (
+    <div className="flex items-center gap-1.5 py-2 border-b border-slate-50 last:border-b-0">
+      <div className="w-4 text-sm font-semibold text-slate-400 text-center shrink-0">{index + 1}</div>
+      <div className="w-14 shrink-0 leading-tight">
+        <div className="text-[11px] font-medium text-slate-500">{zurueck ? strFormatSetValue(type, zurueck.set) : "–"}</div>
+        {zurueck && <div className="text-[10px] text-slate-300 font-num">{fmtISOshort(zurueck.date)}</div>}
+      </div>
+      {type === "weight" && (<>
+        <input inputMode="decimal" placeholder="kg" value={set.kg} onChange={(e) => patch({ kg: e.target.value })} className={inputCls} style={{ width: 58 }} />
+        <input inputMode="numeric" placeholder="Wdh." value={set.reps} onChange={(e) => patch({ reps: e.target.value })} className={inputCls} style={{ width: 54 }} />
+      </>)}
+      {type === "reps" && (<>
+        <input inputMode="numeric" placeholder="Wdh." value={set.reps} onChange={(e) => patch({ reps: e.target.value })} className={inputCls} style={{ width: 54 }} />
+        {showExtraWeight && <input inputMode="decimal" placeholder="+kg" value={set.extraKg} onChange={(e) => patch({ extraKg: e.target.value })} className={inputCls} style={{ width: 54 }} />}
+      </>)}
+      {type === "time" && <input inputMode="numeric" placeholder="Sek." value={set.seconds} onChange={(e) => patch({ seconds: e.target.value })} className={inputCls} style={{ width: 62 }} />}
+      {type === "distance" && <input inputMode="numeric" placeholder="cm" value={set.cm} onChange={(e) => patch({ cm: e.target.value })} className={inputCls} style={{ width: 62 }} />}
+      {type !== "distance" && <input inputMode="numeric" placeholder="Pause" value={set.pause} onChange={(e) => patch({ pause: e.target.value })} className={inputCls} style={{ width: 46, color: "#94a3b8" }} />}
+      <div className="ml-auto flex items-center gap-1 shrink-0">
+        <button type="button" onClick={() => patch({ done: !set.done })}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border"
+          style={set.done ? { background: "#0d9488", borderColor: "#0d9488", color: "#fff" } : { borderColor: "#cbd5e1", color: "transparent" }}>
+          <Check size={14} />
+        </button>
+        <button type="button" onClick={onRemove} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-300"><Trash2 size={14} /></button>
+      </div>
+    </div>
+  );
+}
+// v7.22: Eintragsformular für die neue Kraftprotokollierung. Dient auch als Bearbeiten-Formular —
+// mit editEntry befüllt es sich aus dem bestehenden Eintrag und "speichern" überschreibt ihn, statt
+// einen neuen anzuhängen (Mirkos Zusatzwunsch: migrierte wie neue Einträge müssen nachjustierbar sein).
+function StrEntryForm({ log, typeMemory, editEntry, onSave, onCancelEdit, onDelete }) {
   const dark = useDark();
-  const names = useMemo(() => [...new Set(data.strengthLog.map((s) => s.exercise))], [data.strengthLog]);
-  const [view, setView] = useState("");
-  const [form, setForm] = useState({ date: todayISO(), exercise: "", weight: "", reps: "", sets: "" });
-  useEffect(() => { if (!view && names.length) setView(names[0]); }, [names, view]);
-  const add = () => { if (!form.exercise.trim()) return; setData((d) => ({ ...d, strengthLog: [...d.strengthLog, { id: uid(), date: form.date, exercise: form.exercise.trim(), weight: Number(form.weight) || 0, reps: Number(form.reps) || 0, sets: Number(form.sets) || 0 }] })); setForm({ ...form, weight: "", reps: "" }); };
-  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
-  const remove = (id) => {
-    const item = data.strengthLog.find((s) => s.id === id);
-    setData((d) => ({ ...d, strengthLog: d.strengthLog.filter((s) => s.id !== id) }));
-    if (item) triggerUndo("Eintrag", "strengthLog", item);
-  };
-  const unitOf = (name) => (/sprung|jump/i.test(name || "") ? "cm" : "kg"); // 2.0: Sprunghöhe in cm statt kg
-  // v6.2 Motivations-Audit: Laufen hat Bestzeiten-Tiles, Kraft hatte gar keine Bestwerte — nachgezogen
-  const strengthPbs = useMemo(() => {
+  const isEdit = !!editEntry;
+  const [name, setName] = useState(editEntry ? editEntry.exercise : "");
+  const [type, setType] = useState(editEntry ? editEntry.type : "weight");
+  const [sets, setSets] = useState(editEntry ? toEditableSets(editEntry.sets) : [emptyStrSet("weight")]);
+  const [showExtraWeight, setShowExtraWeight] = useState(editEntry ? editEntry.type === "reps" && editEntry.sets.some((s) => s.extraKg > 0) : false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    setName(editEntry ? editEntry.exercise : "");
+    setType(editEntry ? editEntry.type : "weight");
+    setSets(editEntry ? toEditableSets(editEntry.sets) : [emptyStrSet("weight")]);
+    setShowExtraWeight(editEntry ? editEntry.type === "reps" && editEntry.sets.some((s) => s.extraKg > 0) : false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editEntry && editEntry.id]);
+
+  const knownNames = Object.keys(typeMemory);
+  const suggestions = name.trim()
+    ? knownNames.filter((n) => n.toLowerCase().includes(name.trim().toLowerCase()) && n.toLowerCase() !== name.trim().toLowerCase()).slice(0, 5)
+    : [];
+
+  function applyType(newType) {
+    setType(newType);
+    setSets([emptyStrSet(newType)]);
+    setShowExtraWeight(false);
+  }
+  function pickSuggestion(picked) {
+    setName(picked);
+    setShowSuggestions(false);
+    applyType(typeMemory[picked] || "weight");
+  }
+  function handleNameBlur() {
+    setShowSuggestions(false);
+    if (isEdit) return; // im Bearbeiten-Modus den bereits gesetzten Typ nicht durch Blur überschreiben
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const exactKnown = knownNames.find((n) => n.toLowerCase() === trimmed.toLowerCase());
+    if (exactKnown) { if (exactKnown !== trimmed) setName(exactKnown); applyType(typeMemory[exactKnown]); }
+  }
+  function updateSet(index, newSet) { setSets((prev) => prev.map((s, i) => (i === index ? newSet : s))); }
+  function removeSet(index) { setSets((prev) => prev.filter((_, i) => i !== index)); }
+  function addSet() {
+    setSets((prev) => {
+      const prevRow = prev[prev.length - 1];
+      const zurueck = getZurueckValue(log, name, prev.length, editEntry && editEntry.id);
+      const base = prevRow && Object.values(prevRow).some((v) => v !== "" && v !== false)
+        ? prefillStrSet(type, prevRow)
+        : zurueck ? prefillStrSet(type, { ...zurueck.set, pause: zurueck.set.pause ?? "" })
+        : emptyStrSet(type);
+      return [...prev, base];
+    });
+  }
+  function handleSave() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const cleaned = sets.filter((s) => isSetFilled(type, s)).map((s) => numifySet(type, s));
+    if (!cleaned.length) return;
+    if (isEdit) onSave({ ...editEntry, exercise: trimmed, type, sets: cleaned });
+    else onSave({ id: uid(), date: todayISO(), exercise: trimmed, type, sets: cleaned });
+  }
+
+  const trimmedName = name.trim();
+  const isKnown = trimmedName && knownNames.some((n) => n.toLowerCase() === trimmedName.toLowerCase());
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between">
+        <Eyebrow>{isEdit ? "Eintrag bearbeiten" : "Satz eintragen"}</Eyebrow>
+        {isEdit && <span className="text-[11px] font-num text-slate-400">{fmtISOshort(editEntry.date)}</span>}
+      </div>
+
+      {!isEdit && (
+        <div className="mt-3 mb-1 rounded-xl p-3" style={panel(dark, "#0d9488", "#f0fdfa", "#99f6e4")}>
+          <div className="flex items-start gap-2"><Info size={15} className="mt-0.5 shrink-0" style={{ color: safeText(dark, "#0d9488") }} /><p className="text-xs leading-relaxed" style={{ color: safeText(dark, "#0f766e") }}><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {BASELINE.map((b) => {
+              const cleanName = b.replace(/\s*\(.*\)/, "");
+              return <button key={b} type="button" onClick={() => { setName(cleanName); applyType(SEED_TYPES[cleanName] || "weight"); }} className="rounded-full bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-medium text-teal-700">{b}</button>;
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="relative mt-3 mb-1">
+        <input
+          value={name}
+          onChange={(e) => { setName(e.target.value); setShowSuggestions(true); }}
+          onFocus={() => setShowSuggestions(true)}
+          onBlur={handleNameBlur}
+          placeholder="Übung"
+          className="tc-input mb-1"
+        />
+        {showSuggestions && suggestions.length > 0 && (
+          <div className="absolute z-10 left-0 right-0 mt-0.5 rounded-xl border border-slate-200 bg-white shadow-md overflow-hidden">
+            {suggestions.map((s) => {
+              const T = STR_TYPES[typeMemory[s]] || STR_TYPES.weight;
+              const Icon = T.icon;
+              return (
+                <button type="button" key={s} onMouseDown={() => pickSuggestion(s)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-50">
+                  <Icon size={13} style={{ color: T.color }} /> {s}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <div className="text-xs text-slate-400 mb-3 h-4">
+        {trimmedName && !isEdit && (isKnown ? `Zuletzt als „${STR_TYPES[type].label}" erfasst` : "Neue Übung — Typ unten wählen")}
+      </div>
+
+      <StrTypeChips value={type} onChange={applyType} />
+
+      {type === "reps" && (
+        <>
+          <button type="button" onClick={() => setShowExtraWeight((v) => !v)} className="flex items-center gap-1 text-xs font-semibold text-teal-700 mb-2">
+            <Plus size={12} /> {showExtraWeight ? "Zusatzgewicht ausblenden" : "Zusatzgewicht (optional)"}
+          </button>
+          {showExtraWeight && (
+            <div className="text-xs text-slate-400 mb-2 -mt-1">
+              Tipp: Für saubere Bestwerte/Verlauf lieber einen eigenen Namen wie „Klimmzüge +Gewicht" für dauerhaft gewichtete Sätze nutzen — sonst zählen Wdh. mit und ohne Zusatzgewicht in einer Statistik zusammen.
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="text-xs text-slate-400 mb-1">„Zuletzt" zeigt, was du beim letzten Mal bei diesem Satz gemacht hast.</div>
+      {sets.map((s, i) => (
+        <StrSetRow
+          key={i}
+          type={type}
+          index={i}
+          set={s}
+          zurueck={getZurueckValue(log, trimmedName, i, editEntry && editEntry.id)}
+          onChange={updateSet}
+          onRemove={() => removeSet(i)}
+          showExtraWeight={showExtraWeight}
+        />
+      ))}
+
+      <button type="button" onClick={addSet} className="flex items-center gap-2 text-sm font-bold text-slate-600 mt-3 mb-4">
+        <Plus size={16} /> Eine Serie hinzufügen
+      </button>
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={!trimmedName || !sets.some((s) => isSetFilled(type, s))}
+        className="w-full rounded-2xl bg-teal-600 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold py-3.5 text-sm"
+      >
+        {isEdit ? "Änderungen speichern" : "Übung speichern"}
+      </button>
+      {isEdit && (
+        <div className="flex items-center justify-between mt-2.5">
+          <button type="button" onClick={onCancelEdit} className="text-xs font-semibold text-slate-500">Abbrechen</button>
+          <button type="button" onClick={() => onDelete(editEntry.id)} className="text-xs font-semibold text-rose-500">Eintrag löschen</button>
+        </div>
+      )}
+    </Card>
+  );
+}
+function strBestHeadline(type, set) {
+  const val = strMetricValue(type, set);
+  // set.reps kann bei migrierten Alt-Einträgen ohne Wdh.-Feld 0 sein — "0 Wdh." würde fälschlich
+  // "null Wiederholungen geschafft" suggerieren statt "unbekannt", deshalb dann ganz weglassen.
+  if (type === "weight") return { big: `${val} kg`, sub: set.reps ? `${set.reps} Wdh.` : "" };
+  if (type === "reps") return { big: `${val}×`, sub: set.extraKg ? `+${set.extraKg}kg` : "Wdh." };
+  if (type === "time") return { big: strFormatSeconds(val), sub: "gehalten" };
+  if (type === "distance") return { big: `${val} cm`, sub: "Sprunghöhe" };
+}
+function StrBestwerteGrid({ log, names }) {
+  const dark = useDark();
+  const cards = names.map((n) => ({ name: n, best: strAllTimeBest(log, n) })).filter((c) => c.best);
+  if (!cards.length) return null;
+  return (
+    <Card className="p-4">
+      <Eyebrow>Bestwerte</Eyebrow>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {cards.map(({ name, best }) => {
+          const h = strBestHeadline(best.type, best.set);
+          return (
+            <div key={name} className="rounded-xl p-2.5" style={{ background: dark ? "#141d2c" : "#f1f5f9" }}>
+              <div className="text-[11px] font-semibold text-slate-500 truncate">{name}</div>
+              <div className="font-num font-bold text-lg" style={{ color: safeText(dark, "#0f172a") }}>{h.big}</div>
+              <div className="text-[10px] text-slate-400 font-num">{fmtISOshort(best.date)}{h.sub ? ` · ${h.sub}` : ""}</div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+const STR_METRIC_LABELS = {
+  weight: { top: "Schwerster Satz", volume: "Gesamtvolumen" },
+  reps: { top: "Meiste Wdh.", volume: "Gesamt-Wdh." },
+  time: { top: "Längster Satz", volume: "Gesamtzeit" },
+};
+// Breiten aus der tatsächlich längsten formatierten Tick-Beschriftung (inkl. Einheit) mit Puffer —
+// siehe chart-margin-safety-Muster, das schon im abgestimmten Referenz-Artefakt angewendet wurde.
+function strTickWidth(type, metric) {
+  // v7.22-Fix (verify-app.mjs fand echtes SVG-Clipping): die Domain-Rundung in StrVerlaufSection
+  // erzeugt Tick-Beschriftungen mit einer Nachkommastelle ("56.1kg"), die breiter sind als die
+  // ursprünglich angenommenen ganzzahligen Werte — Breiten mit spürbarem Puffer statt exakt passend.
+  if (type === "weight") return metric === "volume" ? 58 : 54;
+  if (type === "reps") return 40;
+  if (type === "time") return 52;
+  if (type === "distance") return 46;
+  return 40;
+}
+function strFormatTick(type, metric, v) {
+  if (type === "weight") return `${Number.isInteger(v) ? v : v.toFixed(1)}kg`;
+  if (type === "reps") return `${Math.round(v)}×`;
+  if (type === "time") return strFormatSeconds(v);
+  if (type === "distance") return `${Math.round(v)}cm`;
+  return v;
+}
+function StrVerlaufSection({ log, names }) {
+  const dark = useDark();
+  const [selected, setSelected] = useState(names[0] || "");
+  const [metric, setMetric] = useState("top");
+  const [range, setRange] = useState("all");
+  useEffect(() => { if (!names.includes(selected) && names.length) setSelected(names[0]); }, [names, selected]);
+
+  const relevant = useMemo(() => log.filter((e) => e.exercise === selected).sort((a, b) => a.date.localeCompare(b.date)), [log, selected]);
+  const type = relevant.length ? relevant[0].type : null;
+  const supportsToggle = type === "weight" || type === "reps" || type === "time";
+  const fullData = useMemo(() => relevant.map((e) => {
+    const top = strTopSet(e);
+    const value = (metric === "volume" && supportsToggle) ? strVolume(e) : strMetricValue(type, top);
+    return { iso: e.date, dateLabel: fmtISOshort(e.date), value };
+  }), [relevant, metric, type, supportsToggle]);
+  const data = applyTimeRange(fullData, range);
+
+  const values = data.map((d) => d.value);
+  const min = values.length ? Math.min(...values) : 0;
+  const max = values.length ? Math.max(...values) : 1;
+  const pad = Math.max((max - min) * 0.25, max * 0.06, 1);
+  const domain = [Math.max(0, Math.round((min - pad) * 10) / 10), Math.round((max + pad) * 10) / 10];
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-2 gap-1.5 flex-wrap">
+        <Eyebrow>Verlauf</Eyebrow>
+        <div className="flex items-center gap-1.5">
+          <TimeRangeSelect value={range} onChange={setRange} />
+          {names.length > 0 && (
+            <select value={selected} onChange={(e) => { setSelected(e.target.value); setMetric("top"); }} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" style={{ maxWidth: 130 }}>
+              {names.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+      {type && supportsToggle && (
+        <div className="flex gap-1.5 mb-3">
+          {["top", "volume"].map((m) => (
+            <button key={m} type="button" onClick={() => setMetric(m)} className={`rounded-full px-3 py-1.5 text-xs font-semibold border transition ${metric === m ? "text-white border-transparent" : "bg-white text-slate-500 border-slate-200"}`} style={metric === m ? { background: "#0d9488" } : {}}>
+              {STR_METRIC_LABELS[type][m]}
+            </button>
+          ))}
+        </div>
+      )}
+      {data.length < 2 ? (
+        <div className="py-8 text-center text-xs text-slate-400">{fullData.length >= 2 ? "Zu wenig Einträge in diesem Zeitraum." : "Mind. 2 Einträge dieser Übung für den Verlauf."}</div>
+      ) : (
+        <div style={{ width: "100%", height: 180 }}>
+          <ResponsiveContainer>
+            <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -4 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridCol(dark)} />
+              <XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
+              <YAxis width={strTickWidth(type, metric)} domain={domain} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => strFormatTick(type, metric, v)} axisLine={false} tickLine={false} />
+              <Tooltip formatter={(v) => strFormatTick(type, metric, v)} {...tipTop(dark)} />
+              <Line type="linear" dataKey="value" stroke={STR_TYPES[type].color} strokeWidth={2.5} dot={{ r: 4, fill: STR_TYPES[type].color }} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </Card>
+  );
+}
+// v7.22: zweistufige Historie — Tag antippen klappt die Übungen dieses Tages auf, eine Übung antippen
+// öffnet sie zum Bearbeiten im Formular oben (onEditEntry). Tages-Label kommt aus dem echten Plan
+// (plannedStrengthFor), sonst "Freies Training".
+function StrHistorieSection({ log, illnessLog, planEndMode, onEditEntry }) {
+  const [expanded, setExpanded] = useState(null);
+  const byDate = useMemo(() => {
     const m = {};
-    data.strengthLog.forEach((s) => { if (s.weight > 0 && (!m[s.exercise] || s.weight > m[s.exercise].weight)) m[s.exercise] = s; });
-    return m;
-  }, [data.strengthLog]);
-  const fullSeries = useMemo(() => data.strengthLog.filter((s) => s.exercise === view && s.weight > 0).sort((a, b) => a.date.localeCompare(b.date)).map((s) => ({ iso: s.date, date: fmtISOshort(s.date), weight: s.weight })), [data.strengthLog, view]);
-  const [strengthRange, setStrengthRange] = useState("all");
-  const series = useMemo(() => applyTimeRange(fullSeries, strengthRange), [fullSeries, strengthRange]);
-  const list = [...data.strengthLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
+    log.forEach((e) => { (m[e.date] = m[e.date] || []).push(e); });
+    return Object.entries(m).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [log]);
+  if (!byDate.length) return null;
+  return (
+    <Card className="p-4">
+      <Eyebrow>Historie</Eyebrow>
+      {byDate.map(([date, entries]) => {
+        const totalSets = entries.reduce((sum, e) => sum + e.sets.length, 0);
+        const isOpen = expanded === date;
+        const planLabel = plannedStrengthFor(date, illnessLog, planEndMode) || "Freies Training";
+        return (
+          <div key={date} className="border-b border-slate-50 last:border-b-0">
+            <button type="button" onClick={() => setExpanded(isOpen ? null : date)} className="flex w-full items-center gap-3 py-3 text-left">
+              <div className="w-12 shrink-0 text-sm font-bold text-slate-700 font-num">{fmtISOshort(date)}</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-slate-700 truncate">{planLabel}</div>
+                <div className="text-xs text-slate-400">{totalSets} {totalSets === 1 ? "Satz" : "Sätze"} · {entries.length} {entries.length === 1 ? "Übung" : "Übungen"}</div>
+              </div>
+              {isOpen ? <ChevronDown size={16} className="text-slate-300" /> : <ChevronRight size={16} className="text-slate-300" />}
+            </button>
+            {isOpen && (
+              <div className="pb-4 pl-14 pr-1 space-y-2.5">
+                {entries.map((e) => {
+                  const T = STR_TYPES[e.type];
+                  const Icon = T.icon;
+                  return (
+                    <button key={e.id} type="button" onClick={() => onEditEntry(e)} className="block w-full text-left">
+                      <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+                        <Icon size={13} style={{ color: T.color }} /> {e.exercise}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        {e.sets.map((s, i) => `S${i + 1}: ${strFormatSetValue(e.type, s)}`).join(" · ")}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+function StrengthProgress({ data, setData }) {
+  const log = data.strengthLog;
+  const typeMemory = useMemo(() => {
+    const map = { ...SEED_TYPES };
+    [...log].sort((a, b) => a.date.localeCompare(b.date)).forEach((e) => { map[e.exercise] = e.type; });
+    return map;
+  }, [log]);
+  const names = useMemo(() => {
+    const seen = [];
+    log.forEach((e) => { if (!seen.includes(e.exercise)) seen.push(e.exercise); });
+    return seen;
+  }, [log]);
+  const [editEntry, setEditEntry] = useState(null);
+  const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+
+  const saveEntry = (entry) => {
+    setData((d) => {
+      const exists = d.strengthLog.some((e) => e.id === entry.id);
+      return { ...d, strengthLog: exists ? d.strengthLog.map((e) => (e.id === entry.id ? entry : e)) : [...d.strengthLog, entry] };
+    });
+    setEditEntry(null);
+  };
+  const deleteEntry = (id) => {
+    const item = log.find((e) => e.id === id);
+    setData((d) => ({ ...d, strengthLog: d.strengthLog.filter((e) => e.id !== id) }));
+    if (item) triggerUndo("Eintrag", "strengthLog", item);
+    setEditEntry(null);
+  };
+
   return (
     <div className="space-y-4">
-      <Card className="p-4" style={panel(dark, "#0d9488", "#f0fdfa", "#99f6e4")}>
-        <div className="flex items-start gap-2"><Info size={15} className="text-teal-500 mt-0.5 shrink-0" /><p className="text-xs text-teal-900 leading-relaxed"><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
-        <div className="mt-2.5 flex flex-wrap gap-1.5">{BASELINE.map((b) => <button key={b} onClick={() => setForm({ ...form, exercise: b.replace(/\s*\(.*\)/, "") })} className="rounded-full bg-white border border-teal-200 px-2.5 py-1 text-[11px] font-medium text-teal-700">{b}</button>)}</div>
-      </Card>
-      <Card className="p-4"><Eyebrow>Satz eintragen</Eyebrow>
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
-          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input col-span-2" />
-          <input list="ex-list" placeholder="Übung" value={form.exercise} onChange={(e) => setForm({ ...form, exercise: e.target.value })} className="tc-input col-span-2" />
-          <datalist id="ex-list">{["Kniebeuge", "Kreuzheben", "Bankdrücken", "Klimmzüge", "Schulterdrücken", "Rudern", ...names].map((n) => <option key={n} value={n} />)}</datalist>
-          <input inputMode="decimal" placeholder="kg" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} className="tc-input font-num" />
-          <input inputMode="numeric" placeholder="Wdh." value={form.reps} onChange={(e) => setForm({ ...form, reps: e.target.value })} className="tc-input font-num" />
-          <input inputMode="numeric" placeholder="Sätze" value={form.sets} onChange={(e) => setForm({ ...form, sets: e.target.value })} className="tc-input font-num col-span-2" />
-        </div>
-        <button onClick={add} className="mt-3 w-full rounded-xl bg-teal-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
-      </Card>
-      {Object.keys(strengthPbs).length > 0 && (
-        <Card className="p-4">
-          <Eyebrow>Bestwerte</Eyebrow>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            {Object.entries(strengthPbs).map(([ex, s]) => (
-              <div key={ex} className="rounded-xl bg-slate-100 p-2.5">
-                <div className="text-[11px] font-semibold text-slate-500 truncate">{ex}</div>
-                <div className="font-num font-bold text-slate-800">{s.weight} {unitOf(ex)}</div>
-                <div className="text-[10px] text-slate-400 font-num">{fmtISOshort(s.date)}{s.reps ? ` · ${s.reps} Wdh.` : ""}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-      <Card className="p-4">
-        <div className="flex items-center justify-between mb-2 gap-1.5 flex-wrap">
-          <Eyebrow>Gewichtsverlauf</Eyebrow>
-          <div className="flex items-center gap-1.5">
-            <TimeRangeSelect value={strengthRange} onChange={setStrengthRange} />
-            {names.length > 0 && <select value={view} onChange={(e) => setView(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0" style={{ maxWidth: 130 }}>{names.map((n) => <option key={n} value={n}>{n}</option>)}</select>}
-          </div>
-        </div>
-        {series.length >= 2 ? (
-          <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
-            <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
-              <YAxis domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
-              <Tooltip formatter={(v) => [v + " " + unitOf(view), unitOf(view) === "cm" ? "Höhe" : "Gewicht"]} {...tipTop(dark)} />
-              <Line type="linear" dataKey="weight" stroke="#0d9488" strokeWidth={2.5} dot={{ r: 3, fill: "#0d9488" }} />
-            </LineChart>
-          </ResponsiveContainer></div>
-        ) : <div className="py-8 text-center text-xs text-slate-400">{fullSeries.length >= 2 ? "Zu wenig Einträge in diesem Zeitraum." : "Mind. 2 Einträge dieser Übung für den Verlauf."}</div>}
-      </Card>
-      {list.length > 0 && <Card className="divide-y divide-slate-100">{list.map((s) => (
-        <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
-          <span className="text-[11px] text-slate-400 font-num w-12 shrink-0">{fmtISOshort(s.date)}</span>
-          <span className="text-xs font-semibold text-slate-700 truncate flex-1">{s.exercise}</span>
-          <span className="font-num text-sm text-slate-800 shrink-0">{s.weight ? `${s.weight} ${unitOf(s.exercise)}` : ""}{(s.sets || s.reps) ? `  ${s.sets || "?"}×${s.reps || "?"}` : ""}</span>
-          <button onClick={() => remove(s.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
-        </div>
-      ))}</Card>}
+      <StrEntryForm
+        log={log}
+        typeMemory={typeMemory}
+        editEntry={editEntry}
+        onSave={saveEntry}
+        onCancelEdit={() => setEditEntry(null)}
+        onDelete={deleteEntry}
+      />
+      <StrBestwerteGrid log={log} names={names} />
+      {names.length > 0 && <StrVerlaufSection log={log} names={names} />}
+      <StrHistorieSection log={log} illnessLog={data.illnessLog} planEndMode={data.planEndMode} onEditEntry={setEditEntry} />
       <UndoToast undo={undo} onUndo={doUndo} />
     </div>
   );
@@ -4660,7 +5186,7 @@ export default function App() {
   const manualRefresh = async () => {
     if (!hasStorage) return;
     setRefreshing(true);
-    try { const res = await window.storage.get(STORAGE_KEY, false); if (res?.value) { let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) }; const mig = migrateDone(next.done); if (mig.changed) next = { ...next, done: mig.done }; setData(next); } } catch (_) {}
+    try { const res = await window.storage.get(STORAGE_KEY, false); if (res?.value) { let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) }; const mig = migrateDone(next.done); if (mig.changed) next = { ...next, done: mig.done }; const strMig = migrateStrengthLog(next.strengthLog); if (strMig.changed) next = { ...next, strengthLog: strMig.log }; setData(next); } } catch (_) {}
     setRefreshing(false);
   };
 
@@ -4799,7 +5325,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.21` : "Fortschritt wird automatisch gespeichert · v7.21"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.22` : "Fortschritt wird automatisch gespeichert · v7.22"}</span>
           </footer>
         </main>
       </div>
