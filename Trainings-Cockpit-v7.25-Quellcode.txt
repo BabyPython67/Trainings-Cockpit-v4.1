@@ -3739,12 +3739,27 @@ function ReorderableExercises({ entries, onCommit, onEditEntry }) {
       try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
     }, LONG_PRESS_MS);
   };
+  // v7.24-Fix: touch-action wird von Anfang an fest auf "none" gesetzt (nicht mehr erst während des
+  // Ziehens umgeschaltet) — der Browser legt bei Touch-Geräten bereits BEIM ERSTEN Kontakt fest, ob eine
+  // Geste scrollen darf, anhand des zu dem Zeitpunkt geltenden touch-action-Werts. Ein späteres Umschalten
+  // (erst wenn der Long-Press-Timer feuert) kommt zu spät: der Browser hat das Scrollen für diese Geste
+  // dann schon zugelassen, ein preventDefault() danach ändert daran nichts mehr — genau das war der
+  // gemeldete Bug ("Scroll wird nicht gelockt, sobald die Übung schwebt"). Weil dadurch normales Scrollen
+  // über eine Übungszeile jetzt nie mehr nativ passiert, übernehmen WIR es manuell (1:1 zum Finger, ohne
+  // Schwung/Momentum) für jede Bewegung, solange noch kein Long-Press ausgelöst wurde.
   const onPointerMove = (e) => {
     const press = pressRef.current;
     if (!press) return;
     const dy = e.clientY - press.startY;
-    if (Math.abs(dy) > DRAG_MOVE_THRESHOLD_PX) press.moved = true;
-    if (dragId == null) { if (press.moved) clearTimer(); return; }
+    if (dragId == null) {
+      if (Math.abs(dy) > DRAG_MOVE_THRESHOLD_PX) {
+        press.moved = true;
+        clearTimer();
+        (document.scrollingElement || document.documentElement).scrollTop -= dy;
+        press.startY = e.clientY;
+      }
+      return;
+    }
     e.preventDefault();
     setDragY(dy);
     const rowH = rowHRef.current;
@@ -3787,7 +3802,7 @@ function ReorderableExercises({ entries, onCommit, onEditEntry }) {
             onPointerCancel={onPointerUp}
             className="flex items-start gap-2 py-2 select-none"
             style={{
-              touchAction: isDragging ? "none" : "pan-y",
+              touchAction: "none", // s. Kommentar in onPointerMove — bewusst immer none, nicht nur während des Ziehens
               transform: isDragging ? `translateY(${dragY}px) scale(1.03)` : undefined,
               boxShadow: isDragging ? "0 8px 20px rgba(15,23,42,.18)" : "none",
               zIndex: isDragging ? 10 : "auto",
@@ -5463,7 +5478,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.24` : "Fortschritt wird automatisch gespeichert · v7.24"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.25` : "Fortschritt wird automatisch gespeichert · v7.25"}</span>
           </footer>
         </main>
       </div>
