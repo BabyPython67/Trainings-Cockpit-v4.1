@@ -400,6 +400,12 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
       // (weekFulfilled filtert ohnehin auf load>0) und "0 Belastungspunkte", ganz ohne die globale
       // Krankheits-Logik anzufassen.
       else if (o && o.status === "entschuldigt") { it.excused = true; it.excuseType = o.excuseType; it.excuseNote = o.note; it.originalLoad = it.load; it.load = 0; }
+      // v7.27 (M12): generische Ersatzeinheit — Original-Slot wird wie die anderen Override-Stati auf
+      // load 0 genullt (fällt automatisch aus Streak/Wochenlast/Badges heraus, siehe weekFulfilled).
+      // Die Ersatz-Einheit selbst lebt NICHT hier, sondern als customLog-Eintrag (linkedSlotUid=it.uid) —
+      // WeekRhythm mergt ihn unter der eigenen Sportart ein (s. dort), buildWeekPlan erzeugt dafür anders
+      // als beim alten VB-Ausfall+Ersatz-Mechanismus KEIN synthetisches Zusatz-Item.
+      else if (o && o.status === "ersetzt") { it.replaced = true; it.replacedByLogId = o.customLogId; it.originalLoad = it.load; it.load = 0; }
     });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
@@ -442,12 +448,17 @@ function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
 // v7.13: offene, noch nicht abgehakte Original-Einheit — Ruhetage/Turnier/bereits verschobene oder
 // ausgefallene Einheiten sowie Ersatz-/Verschoben-Kopien selbst lassen sich nicht (nochmal) verschieben.
 function isMovable(it, data) {
-  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !(data.done || {})[it.uid];
+  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !it.replaced && !(data.done || {})[it.uid];
 }
 // v7.17: analoges Gate für "Entschuldigen (krank / körperlich nicht bereit)" — jede offene, noch nicht
 // abgehakte Einheit mit Last, unabhängig von der Sportart (anders als der VB-spezifische Ausfall-Button).
 function isExcusable(it, data) {
-  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !(data.done || {})[it.uid];
+  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !it.replaced && !(data.done || {})[it.uid];
+}
+// v7.27 (M12): generische Ersatzeinheit — anders als isMovable/isExcusable bewusst OHNE
+// !it.tournament-Ausschluss (Spec: Lauf/Kraft/Volleyball/Turnier sind alle ersetzbar).
+function isReplaceable(it, data) {
+  return it.load > 0 && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !it.replaced && !(data.done || {})[it.uid];
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
 function migrateDone(done) {
@@ -552,11 +563,7 @@ function usePersistentData() {
       if (hasStorage) { try {
         const res = await window.storage.get(STORAGE_KEY, false);
         if (alive && res?.value) {
-          let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) };
-          const mig = migrateDone(next.done);
-          if (mig.changed) next = { ...next, done: mig.done };
-          const strMig = migrateStrengthLog(next.strengthLog);
-          if (strMig.changed) next = { ...next, strengthLog: strMig.log };
+          const next = runMigrations({ ...DEFAULT_DATA, ...JSON.parse(res.value) });
           setData(next); setSavedAt(new Date());
         }
       } catch (_) {} }
@@ -635,10 +642,16 @@ function WeekRhythm({ plan, week, highlightToday, customLog }) {
   const data = plan.map((d, i) => {
     const date = new Date(monday.getTime() + i * DAY_MS);
     const iso = toLocalISO(date);
-    // v7.18: customLog läuft nie durch buildWeekPlan (kein Plan-Slot) — hier zu synthetischen
-    // sport:"sonstige"-Items für den Tag ergänzt, BEVOR dayLoadBySport/Summen berechnet werden, sonst
-    // exakt dieselbe "unsichtbare neue Last-Kategorie"-Fehlerklasse wie beim v7.14-Fix.
-    const customItems = (customLog || []).filter((c) => c.date === iso).map((c) => ({ sport: "sonstige", label: c.label, load: c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0, custom: true }));
+    // v7.18: customLog läuft nie durch buildWeekPlan (kein Plan-Slot) — hier zu synthetischen Items für
+    // den Tag ergänzt, BEVOR dayLoadBySport/Summen berechnet werden, sonst exakt dieselbe "unsichtbare
+    // neue Last-Kategorie"-Fehlerklasse wie beim v7.14-Fix.
+    // v7.27 (M12): sport: c.sport || "sonstige" statt immer fest "sonstige" — eine Ersatzeinheit
+    // (linkedSlotUid gesetzt) soll unter ihrer ECHTEN Kategorie stapeln (Lauf/Kraft/VB), nicht mehr unter
+    // "Sonstige", sonst zeigt der Chart bei einer ersetzten Einheit weiterhin die falsche Kategorie —
+    // exakt der v7.14-Fehlerfall, nur an neuer Stelle. legacyLoad (nur bei migrierten Alt-Einträgen
+    // gesetzt) hat Vorrang vor rpe, damit die Migration keine Punkte über CUSTOM_RPE_LOAD verliert
+    // (s. migrateVbReplacement).
+    const customItems = (customLog || []).filter((c) => c.date === iso).map((c) => ({ sport: c.sport || "sonstige", label: c.label, load: c.legacyLoad != null ? c.legacyLoad : (c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0), custom: true, replaced: !!c.linkedSlotUid }));
     const items = customItems.length ? [...d.items, ...customItems] : d.items;
     const load = d.load + customItems.reduce((s, c) => s + c.load, 0);
     const cancelledLoad = items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
@@ -949,7 +962,10 @@ function InfoToggle({ label, children }) {
 // Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind.
 // v5.0: Krank-Tage zählen nicht mit — eine Krankheitswoche bricht die Serie nicht.
 function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides) {
-  // Ausgefallene Einheiten haben load 0 und fallen hier automatisch raus; Ersatz-Einheiten zählen normal mit
+  // Ausgefallene/entschuldigte/ersetzte Einheiten haben load 0 und fallen hier automatisch aus Zähler
+  // UND Nenner heraus (v7.27/M12: "ersetzt" verhält sich wie die anderen drei Stati — die Ersatz-
+  // Aktivität selbst lebt in customLog, geht also nicht in diese Berechnung ein, zählt also weder für
+  // noch gegen die Woche, bricht aber auch keine Serie).
   const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode, overrides).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
   if (!items.length) return true; // komplett entschuldigte Woche: Serie läuft weiter
   return items.filter((i) => done[i.uid]).length / items.length >= 0.8;
@@ -1037,14 +1053,23 @@ const BADGE_CATALOG = [
 // Wertet den kompletten Katalog gegen die Logs aus. liveStreak wird durchgereicht (CockpitTab hat den
 // Wert schon), alles andere entsteht hier — die Funktion bleibt damit pur und einzeln testbar.
 function computeEarnedBadges(data, currentWeek, liveStreak) {
-  const totalRunKm = Math.round(data.runLog.reduce((s, r) => s + (r.dist || 0), 0) * 100) / 100;
-  const strengthDays = [...new Set(data.strengthLog.map((s) => s.date))].sort();
-  const vbDates = planDoneDatesBySport("vb", data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
+  // v7.27 (M12): Ersatzeinheiten (customLog, linkedSlotUid gesetzt) zählen für die Kategorie-Leitern
+  // automatisch mit — Kraft/VB rein aus der Kategorie (planDoneDatesBySport sieht sie nie, weil der
+  // Original-Slot load 0 hat und nie done[uid] wird), Lauf nur mit echter km-Angabe (informativ ohne
+  // km zählt bewusst nicht für die km-Leiter, s. Akzeptanzkriterien).
+  const replacedLog = (data.customLog || []).filter((c) => c.linkedSlotUid);
+  const replacedRunKm = replacedLog.filter((c) => c.sport === "run" && c.km != null).map((c) => ({ date: c.date, dist: c.km }));
+  const effectiveRunLog = [...data.runLog, ...replacedRunKm];
+  const totalRunKm = Math.round(effectiveRunLog.reduce((s, r) => s + (r.dist || 0), 0) * 100) / 100;
+  const strengthDays = [...new Set([...data.strengthLog.map((s) => s.date), ...replacedLog.filter((c) => c.sport === "strength").map((c) => c.date)])].sort();
+  const vbDates = [...new Set([...planDoneDatesBySport("vb", data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides), ...replacedLog.filter((c) => c.sport === "vb").map((c) => c.date)])].sort();
   const runPlanDates = planDoneDatesBySport("run", data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const longStreak = longestStreakInfo(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const runProgress = runPlanProgress(data.illnessLog, data.planEndMode);
   const runDone = runProgress.uids.filter((u) => data.done[u]).length;
-  const ctx = { data, totalRunKm, strengthDays, vbDates, runPlanDates, longStreak, liveStreak, runDone, runTotal: runProgress.total };
+  // effectiveRunLog auch als data.runLog in den Kontext gespiegelt, damit BADGE_CATALOGs earnedDate-
+  // Closures (c.data.runLog, z. B. run_25km) automatisch dieselben, um Ersatz-km erweiterten Daten sehen.
+  const ctx = { data: { ...data, runLog: effectiveRunLog }, totalRunKm, strengthDays, vbDates, runPlanDates, longStreak, liveStreak, runDone, runTotal: runProgress.total };
   return BADGE_CATALOG.map((b) => {
     const earned = !!b.check(ctx);
     const base = { ...b, earned, earnedDate: earned && b.earnedDate ? b.earnedDate(ctx) : null, current: b.current ? b.current(ctx) : null };
@@ -1185,24 +1210,25 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     <div className={`rounded-xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
       {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
           sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
-      <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway || item.excused ? { opacity: 0.6 } : {}}>
+      <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway || item.excused || item.replaced ? { opacity: 0.6 } : {}}>
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway || item.excused ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway || item.excused || item.replaced ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
               {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
               {item.movedAway && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Verschoben → {DAY_FULL[item.movedTo]}</span>}
               {item.moved && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Verschoben{item.movedFromDay ? ` von ${DAY_FULL[item.movedFromDay]}` : ""}</span>}
               {item.replacement && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersatz</span>}
+              {item.replaced && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersetzt</span>}
               {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
               {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
               {/* v7.17: eigener Entschuldigen-Status pro Einheit, unabhängig vom globalen illnessLog — eigene Farbe je Grund, damit "Krank (Einheit)" nicht mit einer echten Krankheitsphase verwechselt wird */}
               {item.excuseType === "krank" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank (Einheit)</span>}
               {item.excuseType === "koerperlich_nicht_bereit" && <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5">Nicht bereit</span>}
             </div>
-            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.movedAway ? "Verschoben — an anderer Stelle eingeplant" : item.excused ? `Entschuldigt (${item.excuseType === "krank" ? "krank" : "körperlich nicht bereit"}) — zählt diese Woche nicht${item.excuseNote ? `: ${item.excuseNote}` : ""}` : item.desc].filter(Boolean).join(" · ")}</div>
+            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.movedAway ? "Verschoben — an anderer Stelle eingeplant" : item.excused ? `Entschuldigt (${item.excuseType === "krank" ? "krank" : "körperlich nicht bereit"}) — zählt diese Woche nicht${item.excuseNote ? `: ${item.excuseNote}` : ""}` : item.replaced ? "Ersetzt — zählt diese Woche nicht, bricht aber auch keine Serie" : item.desc].filter(Boolean).join(" · ")}</div>
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
@@ -2051,49 +2077,17 @@ function StrengthQuickLog({ item, setData }) {
 }
 
 /* ==== v6.0: Volleyball-Ausfall + Ersatz-Einheit — im aufgeklappten Bereich der VB-Zeile (Woche-Tab) ==== */
-function VbAusfallPanel({ item, day, data, setData }) {
-  const ov = (data.overrides || {})[item.uid];
-  const rep = ov && ov.replacement ? ov.replacement : null;
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ day, sport: "run", label: "", dur: "", load: 4 });
+// v7.27 (M12): die frühere "Ersatz-Einheit planen"-Unterfunktion hier ist auf Mirkos Entscheidung hin
+// (28.07.2026: neuer generischer "ersetzt"-Mechanismus löst den alten VB-Ersatz ab) entfernt — Ersatz
+// läuft jetzt für alle Sportarten einheitlich über ReplacePanel/isReplaceable. Ein bares
+// {status:"ausgefallen"} (Vereinstraining fiel ohne Ersatz aus) bleibt eine eigenständige, weiterhin
+// gültige Aussage und damit hier bestehen.
+function VbAusfallPanel({ item, setData }) {
   const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
   const markCancelled = () => setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen" } } }));
-  // Zurücknehmen räumt auch das Häkchen einer evtl. angelegten Ersatz-Einheit mit ab
-  const revert = () => { setShowForm(false); setData((d) => { const o = { ...(d.overrides || {}) }; delete o[item.uid]; const done = { ...d.done }; delete done[`${item.uid}-ersatz`]; return { ...d, overrides: o, done }; }); };
-  const openForm = () => { setForm(rep ? { day: rep.day, sport: rep.sport, label: rep.label || "", dur: rep.dur || "", load: rep.load || 4 } : { day, sport: "run", label: "", dur: "", load: 4 }); setShowForm(true); };
-  const saveRep = () => { setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen", replacement: { day: form.day, sport: form.sport, label: form.label.trim() || "Ersatz-Einheit", dur: form.dur.trim(), load: Number(form.load) || 4 } } } })); setShowForm(false); };
+  const revert = () => setData((d) => { const o = { ...(d.overrides || {}) }; delete o[item.uid]; return { ...d, overrides: o }; });
   if (!item.cancelled) return <button onClick={markCancelled} className={`${btn} bg-white text-slate-600 border-slate-200`}>Training als ausgefallen markieren</button>;
-  return (
-    <div className="space-y-2.5">
-      {rep && !showForm && (
-        <div className="text-xs text-slate-600 flex items-center gap-1.5"><SportGlyph sport={rep.sport} size={13} /> Ersatz: <b>{rep.label}</b> · {DAY_FULL[rep.day]}{rep.dur ? ` · ${rep.dur}` : ""} · ⚡{rep.load}</div>
-      )}
-      {!showForm ? (
-        <div className="flex flex-wrap gap-2">
-          <button onClick={openForm} className={`${btn} text-white border-transparent`} style={{ background: "#7c3aed" }}>{rep ? "Ersatz bearbeiten" : "Ersatz-Einheit planen"}</button>
-          <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ausfall zurücknehmen</button>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <div className="flex gap-1.5">{["run", "vb", "strength"].map((s) => (
-            <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: SPORT[s].color } : {}}>
-              <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {SPORT[s].label}
-            </button>
-          ))}</div>
-          <input placeholder="Was machst du stattdessen? (z. B. Lockerer Lauf, Techniktraining)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input" />
-          <div className="flex gap-2">
-            <select value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} className="tc-input" style={{ width: 96, flexShrink: 0 }}>{DAYS.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}</select>
-            <input placeholder="Dauer (z. B. 30 Min)" value={form.dur} onChange={(e) => setForm({ ...form, dur: e.target.value })} className="tc-input" style={{ minWidth: 0 }} />
-            <select value={form.load} onChange={(e) => setForm({ ...form, load: Number(e.target.value) })} className="tc-input" style={{ width: 76, flexShrink: 0 }} aria-label="Belastung">{[1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => <option key={l} value={l}>⚡{l}</option>)}</select>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={saveRep} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Speichern</button>
-            <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ausfall zurücknehmen</button>;
 }
 
 /* ==== v7.13: Einheit frei verschieben — generell für jede offene Lauf-/Kraft-/Volleyball-Einheit,
@@ -2186,6 +2180,88 @@ function ExcusePanel({ item, data, setData }) {
   );
 }
 
+/* ==== v7.27 (M12): generische Ersatzeinheit — jede Plan-Einheit (Lauf/Kraft/Volleyball/Turnier) lässt
+   sich durch eine frei gewählte andere Aktivität ersetzen. Löst den alten, nur für Volleyball
+   verdrahteten Ausfall+Ersatz-Mechanismus ab (Mirkos Entscheidung, 28.07.2026: ablösen inkl. Migration
+   der Alt-Daten, siehe migrateVbReplacement). Die Ersatz-Einheit lebt als customLog-Eintrag mit
+   linkedSlotUid — Belastungspunkte über dieselbe RPE-Skala wie die generische "Aktivität eintragen"
+   (customLog, v7.18), nicht neu erfunden. Hinweis: dieses Formular ist aus der Text-Spezifikation im
+   Ausbauplan gebaut, nicht aus dem von Mirko ursprünglich freigegebenen HTML-Sample (kein Dateizugriff
+   darauf in dieser Session) — bei Abweichungen von der erwarteten Interaktion bitte melden. ==== */
+function ReplacePanel({ item, dateISO, data, setData }) {
+  const linked = item.replaced ? (data.customLog || []).find((c) => c.id === item.replacedByLogId) : null;
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ sport: "run", label: "", durationMin: "", rpe: "", runType: "", km: "" });
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  const save = () => {
+    if (!form.label.trim()) return;
+    const id = uid();
+    setData((d) => ({
+      ...d,
+      customLog: [...(d.customLog || []), {
+        id, date: dateISO, label: form.label.trim(), sport: form.sport, linkedSlotUid: item.uid, category: "zusatz",
+        ...(form.durationMin ? { durationMin: Number(form.durationMin) || 0 } : {}),
+        ...(form.rpe ? { rpe: Number(form.rpe) } : {}),
+        ...(form.sport === "run" && form.runType ? { runType: form.runType } : {}),
+        ...(form.sport === "run" && form.km ? { km: Number(form.km) || 0 } : {}),
+      }],
+      overrides: { ...(d.overrides || {}), [item.uid]: { status: "ersetzt", customLogId: id } },
+    }));
+    setShowForm(false);
+    setForm({ sport: "run", label: "", durationMin: "", rpe: "", runType: "", km: "" });
+  };
+  // Rückgängig entfernt Override UND verlinkten customLog-Eintrag zusammen — sonst bliebe ein
+  // verwaister Eintrag mit baumelndem linkedSlotUid zurück (M12-Akzeptanzkriterium).
+  const revert = () => setData((d) => {
+    const o = { ...(d.overrides || {}) }; delete o[item.uid];
+    const customLog = (d.customLog || []).filter((c) => c.id !== item.replacedByLogId);
+    return { ...d, overrides: o, customLog };
+  });
+  if (item.replaced) return (
+    <div className="space-y-2">
+      {linked && (
+        <div className="text-xs text-slate-600 flex items-center gap-1.5">
+          <SportGlyph sport={linked.sport} size={13} /> Ersatz: <b>{linked.label}</b>
+          {linked.durationMin ? ` · ${linked.durationMin} Min` : ""}
+          {linked.sport === "run" && linked.km ? ` · ${linked.km} km` : ""}
+        </div>
+      )}
+      <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ersatz zurücknehmen</button>
+    </div>
+  );
+  if (!showForm) return <button onClick={() => setShowForm(true)} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ersetzen</button>;
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1.5">{["run", "vb", "strength"].map((s) => (
+        <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: SPORT[s].color } : {}}>
+          <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {SPORT[s].label}
+        </button>
+      ))}</div>
+      <input placeholder="Was hast du stattdessen gemacht? (z. B. Schwimmen, Home-Workout)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input" />
+      <div className="flex gap-2">
+        <input placeholder="Dauer (Min)" type="number" value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: e.target.value })} className="tc-input" style={{ minWidth: 0 }} />
+        <select value={form.rpe} onChange={(e) => setForm({ ...form, rpe: e.target.value })} className="tc-input" style={{ width: 128, flexShrink: 0 }} aria-label="Anstrengung (RPE)">
+          <option value="">RPE (Anstrengung)</option>
+          {[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>RPE {r}</option>)}
+        </select>
+      </div>
+      {form.sport === "run" && (
+        <div className="flex gap-2">
+          <select value={form.runType} onChange={(e) => setForm({ ...form, runType: e.target.value })} className="tc-input" style={{ flex: 1, minWidth: 0 }}>
+            <option value="">Lauftyp (optional, nur Info)</option>
+            {Object.entries(RUN_TYPE).map(([k, t]) => <option key={k} value={k}>{t.label}</option>)}
+          </select>
+          <input placeholder="km" type="number" value={form.km} onChange={(e) => setForm({ ...form, km: e.target.value })} className="tc-input" style={{ width: 76, flexShrink: 0 }} />
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button onClick={save} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Speichern</button>
+        <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -2238,21 +2314,23 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
               </div>
               <div className="px-3 pb-3 space-y-1.5">
                 {d.items.map((it) => {
-                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement && !it.moved; // nur echte Vereins-Slots können ausfallen, keine verschobene Kopie
+                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement && !it.moved && !it.replaced; // nur echte Vereins-Slots können ausfallen, keine verschobene/ersetzte Kopie
                   const movable = isMovable(it, data);
                   const excusable = isExcusable(it, data);
+                  const replaceable = isReplaceable(it, data);
                   return (
                     <SessionRow key={it.uid} item={it}
                       done={!!data.done[it.uid]}
                       onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway || excusable || it.excused ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway || excusable || it.excused || replaceable || it.replaced ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
                       isOpen={open === it.uid}
                       extra={<>
                         {it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : null}
-                        {it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? <GarminExport item={it} week={effW} /> : null}
-                        {isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : null}
+                        {it.sport === "run" && !it.replacement && !it.movedAway && !it.excused && !it.replaced ? <GarminExport item={it} week={effW} /> : null}
+                        {isVbSlot ? <VbAusfallPanel item={it} setData={setData} /> : null}
                         {movable || it.movedAway ? <MoveUnitPanel item={it} day={d.day} data={data} setData={setData} /> : null}
                         {excusable || it.excused ? <ExcusePanel item={it} data={data} setData={setData} /> : null}
+                        {replaceable || it.replaced ? <ReplacePanel item={it} dateISO={toLocalISO(date)} data={data} setData={setData} /> : null}
                       </>}
                     />
                   );
@@ -2424,6 +2502,53 @@ function migrateStrengthLog(log) {
     return { id: g.entries[0].id, date: g.date, exercise: g.exercise, type, sets };
   });
   return { changed: true, log: out };
+}
+// v7.27 (M12): löst den alten, nur für Volleyball verdrahteten overrides.ausgefallen+replacement-
+// Mechanismus ab (Mirkos ausdrückliche Entscheidung, 28.07.2026: ablösen inkl. Migration statt parallel
+// bestehen lassen). Migriert NUR Einträge mit einem echten replacement-Objekt — ein bares
+// {status:"ausgefallen"} (Training fiel ohne Ersatz aus) ist eine andere, weiterhin gültige Aussage und
+// bleibt unangetastet (siehe VbAusfallPanel). WICHTIG: kein RPE-Rückweg — CUSTOM_RPE_LOAD deckt nur
+// {1,2,4,6,7} ab, das alte replacement.load war aber 1-9-geclampt; ein RPE-Rückweg würde historische
+// Belastungspunkte (Werte wie 3/5/8/9) unwiderruflich verändern. legacyLoad übernimmt den alten Wert
+// 1:1, WeekRhythm liest ihn vorrangig vor rpe (s. dort) — die historische Wochenlast bleibt exakt gleich.
+function migrateVbReplacement(overrides, customLog) {
+  const ov = overrides || {};
+  const log = customLog || [];
+  let changed = false;
+  const nextOv = { ...ov };
+  const nextLog = [...log];
+  Object.entries(ov).forEach(([ouid, o]) => {
+    if (!o || o.status !== "ausgefallen" || !o.replacement) return;
+    const r = o.replacement;
+    const m = ouid.match(/^w(\d+)-/);
+    if (!m || !DAYS.includes(r.day) || !SPORT[r.sport] || r.sport === "rest") return; // defensiv: unbekannte Form, alten Zustand nicht anfassen
+    const week = Number(m[1]);
+    const date = toLocalISO(new Date(mondayOfWeek(week).getTime() + DAYS.indexOf(r.day) * DAY_MS));
+    const id = uid();
+    nextLog.push({
+      id, date, label: r.label || "Ersatz-Einheit", sport: r.sport, linkedSlotUid: ouid,
+      legacyLoad: Math.max(1, Math.min(9, Number(r.load) || 4)), migrated: true,
+      ...(r.dur ? { note: r.dur } : {}),
+    });
+    nextOv[ouid] = { status: "ersetzt", customLogId: id };
+    changed = true;
+  });
+  return changed ? { changed, overrides: nextOv, customLog: nextLog } : { changed: false, overrides: ov, customLog: log };
+}
+// Bündelt alle Alt-Daten-Migrationen an einer Stelle — WICHTIG: von JEDEM Ladepfad aufrufen (siehe
+// usePersistentData UND App()s manualRefresh, die bis v7.26 zwei unabhängige Kopien derselben Migrations-
+// Aufrufe waren; ein an nur einer Stelle nachgetragenes migrateX wäre an der anderen lautlos übersehen
+// worden — sonst genau die Fehlerklasse, die diese Bündelung verhindern soll). Muss auf next NACH dem
+// {...DEFAULT_DATA, ...JSON.parse(...)}-Spread laufen, nicht auf dem rohen geparsten JSON, sonst crasht
+// ein sehr altes Backup ganz ohne overrides/customLog-Feld.
+function runMigrations(next) {
+  const mig = migrateDone(next.done);
+  if (mig.changed) next = { ...next, done: mig.done };
+  const strMig = migrateStrengthLog(next.strengthLog);
+  if (strMig.changed) next = { ...next, strengthLog: strMig.log };
+  const vbMig = migrateVbReplacement(next.overrides, next.customLog);
+  if (vbMig.changed) next = { ...next, overrides: vbMig.overrides, customLog: vbMig.customLog };
+  return next;
 }
 // v7.24: Übungsreihenfolge innerhalb eines Historie-Tages per Drag&Drop änderbar. strengthLog ist ein
 // flaches Array über alle Tage — reordering betrifft nur die relative Reihenfolge der Einträge DESSELBEN
@@ -3942,7 +4067,10 @@ function CustomActivityProgress({ data, setData }) {
     if (item) triggerUndo("Eintrag", "customLog", item);
   };
   const catLabel = (k) => CUSTOM_CATEGORIES.find(([kk]) => kk === k)?.[1] || k;
-  const list = [...data.customLog].filter((c) => filterCat === "all" || c.category === filterCat).sort((a, b) => b.date.localeCompare(a.date));
+  // v7.27 (M12): Ersatzeinheiten (linkedSlotUid gesetzt) gehören zu einem Plan-Slot und damit laut
+  // eigenem Kartentext oben ("für alles, was zu keinem Plan-Slot gehört") NICHT hierher — sie werden
+  // stattdessen über ReplacePanel im Wochentab verwaltet und tauchen dort + im Wochenrhythmus-Chart auf.
+  const list = data.customLog.filter((c) => !c.linkedSlotUid).filter((c) => filterCat === "all" || c.category === filterCat).sort((a, b) => b.date.localeCompare(a.date));
   return (
     <div className="space-y-4">
       <Card className="p-4" style={panel(dark, MANUAL_SPORT.color, MANUAL_SPORT.tint, "#e9d5ff")}>
@@ -5096,9 +5224,17 @@ function CalendarTab({ data }) {
     for (const d of days) {
       const iso = toLocalISO(d);
       const w = rawPlanWeekOf(d, data.illnessLog, data.planEndMode);
-      // Ausgefallene/entschuldigte Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel/entschuldigt wurde
-      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled || it.excused) : [];
-      out[iso] = { items, school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
+      // Ausgefallene/entschuldigte/ersetzte Einheiten (load 0) bewusst mitnehmen: der Tag soll zeigen, DASS etwas ausfiel/entschuldigt/ersetzt wurde
+      const items = w ? ((getPlan(w).find((x) => x.day === DAYS[(d.getDay() + 6) % 7]) || {}).items || []).filter((it) => it.load > 0 || it.cancelled || it.excused || it.replaced) : [];
+      // v7.27 (M12): die Ersatz-AKTIVITÄT selbst lebt in customLog (linkedSlotUid), nicht in
+      // buildWeekPlan — ohne diese Ergänzung wäre im Kalender nur der genullte Original-Slot sichtbar,
+      // nie die tatsächlich ausgeübte Ersatz-Einheit (analog zur customItems-Ergänzung in WeekRhythm).
+      const replacementItems = (data.customLog || []).filter((c) => c.date === iso && c.linkedSlotUid).map((c) => ({
+        uid: `cal-custom-${c.id}`, sport: c.sport || "sonstige", label: c.label,
+        load: c.legacyLoad != null ? c.legacyLoad : (c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0),
+        custom: true, replacementFor: c.linkedSlotUid,
+      }));
+      out[iso] = { items: [...items, ...replacementItems], school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
     }
     return out;
   }, [days, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides, data.schoolLog]);
@@ -5109,7 +5245,7 @@ function CalendarTab({ data }) {
   const dots = (iso) => {
     const e = byDay[iso]; if (!e) return [];
     const out = [];
-    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled || it.excused) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
+    if (filter.training) { const seen = new Set(); for (const it of e.items) { if (it.cancelled || it.excused || it.replaced) continue; if (!seen.has(it.sport)) { seen.add(it.sport); out.push(SPORT[it.sport].color); } } }
     if (filter.schule && e.school.length) out.push(e.school.some((s) => s.art === "klausur" && !s.erledigt) ? KLAUSUR_COLOR : CAL_SCHOOL);
     return out.slice(0, 4);
   };
@@ -5118,15 +5254,18 @@ function CalendarTab({ data }) {
     // v7.17: eigener Entschuldigen-Status pro Einheit (load bereits 0, wie "ausgefallen") — analoges
     // Früh-Return statt Last "⚡0" mit anzuhängen, Grund im Text unterscheidbar von echter Krankheit.
     if (it.excused) return `entschuldigt (${it.excuseType === "koerperlich_nicht_bereit" ? "körperlich nicht bereit" : "krank"})${it.excuseNote ? `: ${it.excuseNote}` : ""}`;
+    // v7.27 (M12): Original-Slot einer Ersatzeinheit — load bereits 0, analoger Früh-Return; die
+    // tatsächliche Ersatz-Aktivität ist ein eigenes Item (replacementFor gesetzt, s. u.), nicht dieses.
+    if (it.replaced) return "ersetzt";
     const parts = [];
-    if (it.replacement) parts.push("Ersatz");
+    if (it.replacementFor) parts.push("Ersatz");
     if (big && it.desc) parts.push(it.desc); else if (it.dur) parts.push(it.dur);
     parts.push(`⚡${it.load}`);
     if (it.illness === "sick" && !data.done[it.uid]) parts.push("entschuldigt (krank)");
     return parts.join(" · ");
   };
   const trainingRows = (e, big) => e.items.map((it) => (
-    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={!!data.done[it.uid]} cancelled={!!it.cancelled || !!it.excused}
+    <CalRow key={it.uid} big={big} color={SPORT[it.sport].color} done={it.replacementFor ? true : !!data.done[it.uid]} cancelled={!!it.cancelled || !!it.excused || !!it.replaced}
       label={it.label + (it.time ? ` · ${it.time}` : "")} sub={trainingSub(it, big)} />
   ));
   const schoolRows = (e, big) => e.school.map((s) => (
@@ -5339,7 +5478,7 @@ export default function App() {
   const manualRefresh = async () => {
     if (!hasStorage) return;
     setRefreshing(true);
-    try { const res = await window.storage.get(STORAGE_KEY, false); if (res?.value) { let next = { ...DEFAULT_DATA, ...JSON.parse(res.value) }; const mig = migrateDone(next.done); if (mig.changed) next = { ...next, done: mig.done }; const strMig = migrateStrengthLog(next.strengthLog); if (strMig.changed) next = { ...next, strengthLog: strMig.log }; setData(next); } } catch (_) {}
+    try { const res = await window.storage.get(STORAGE_KEY, false); if (res?.value) { setData(runMigrations({ ...DEFAULT_DATA, ...JSON.parse(res.value) })); } } catch (_) {}
     setRefreshing(false);
   };
 
@@ -5478,7 +5617,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.26` : "Fortschritt wird automatisch gespeichert · v7.26"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.27` : "Fortschritt wird automatisch gespeichert · v7.27"}</span>
           </footer>
         </main>
       </div>
