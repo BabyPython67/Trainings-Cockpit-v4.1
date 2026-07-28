@@ -1517,7 +1517,7 @@ function GesamtstatistikCard({ data, dark }) {
         <div className="mt-3">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">Kilometer pro Monat</div>
           <div style={{ width: "100%", height: 120 }}><ResponsiveContainer>
-            <BarChart data={months} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <BarChart data={months} margin={{ top: 4, right: 20, left: -18, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} allowDecimals={false} />
@@ -2713,7 +2713,7 @@ function PulseTrendChart({ rows, runType, tg, dark }) {
     <>
       <div className="text-[10px] font-semibold mt-3 mb-1" style={{ color: safeText(dark, "#e11d48") }}>Puls-Verlauf je Runde{anyPeak ? " · Arbeitsrunden: Peak −" + HR_PEAK_MARGIN_BPM : ""}</div>
       <div style={{ width: "100%", height: 130 }}><ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 14, right: 8, left: -4, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 14, right: 20, left: -4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
           <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
           <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} allowDecimals={false} />
@@ -2821,7 +2821,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
           {economyF.length >= 2 ? (
             <>
               <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
-                <LineChart data={economyChartData} margin={{ top: 5, right: 8, left: -4, bottom: 0 }} onClick={onEcoPick}>
+                <LineChart data={economyChartData} margin={{ top: 5, right: 20, left: -4, bottom: 0 }} onClick={onEcoPick}>
                   <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                   <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                   <YAxis yAxisId="cadence" domain={["dataMin-5", "dataMax+5"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={36} />
@@ -2859,7 +2859,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
           {lastEf && <div className="mb-2 flex items-baseline gap-1.5"><span className="font-num text-xl font-bold text-slate-800">{lastEf.ef}</span><span className="text-xs text-slate-500">m/Schlag</span><span className="text-[10px] text-slate-400">· aktuell</span></div>}
           {efF.length >= 2 ? (
             <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
-              <LineChart data={efF} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <LineChart data={efF} margin={{ top: 5, right: 20, left: -4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                 <YAxis domain={["dataMin - 0.06", "dataMax + 0.06"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} tickFormatter={(v) => v.toFixed(2)} />
@@ -2880,7 +2880,7 @@ function SmartChartsCard({ economySeries, efSeries, vo2Series, vo2Now, vo2Arrow,
           </div>
           {vo2F.length >= 2 ? (
             <div style={{ width: "100%", height: 150 }}><ResponsiveContainer>
-              <LineChart data={vo2F} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+              <LineChart data={vo2F} margin={{ top: 5, right: 20, left: -4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
                 <YAxis domain={["dataMin - 2", "dataMax + 2"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={34} tickFormatter={(v) => Math.round(v)} />
@@ -2941,7 +2941,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
       )}
       <div className="text-[10px] font-semibold" style={{ color: safeText(dark, "#4338ca") }}>Arbeits-Pace (niedriger = schneller)</div>
       <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
-        <LineChart data={series} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+        <LineChart data={series} margin={{ top: 16, right: 20, left: -4, bottom: 0 }} onClick={onPick}>
           <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
           <XAxis dataKey="date" tick={hasHr ? false : { fontSize: 9, fill: "#94a3b8" }} height={hasHr ? 4 : undefined} interval="preserveStartEnd" />
           <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
@@ -2957,7 +2957,7 @@ function TypeProgressCharts({ series, target, hrTarget }) {
         <>
           <div className="text-[10px] font-semibold mt-1.5" style={{ color: safeText(dark, "#e11d48") }}>Ø-Puls des Abschnitts</div>
           <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
-            <LineChart data={series} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+            <LineChart data={series} margin={{ top: 14, right: 20, left: -4, bottom: 0 }} onClick={onPick}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
@@ -3181,7 +3181,7 @@ function RunProgress({ data, setData, currentWeek }) {
                 </div>
                 {(predView === "best" ? predTrend : predRaw).length >= 2 ? (
                   <div style={{ width: "100%", height: 100 }}><ResponsiveContainer>
-                    <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 6, left: -4, bottom: 0 }}>
+                    <LineChart data={predView === "best" ? predTrend : predRaw} margin={{ top: 4, right: 20, left: -4, bottom: 0 }}>
                       <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#a5b4fc" }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                       <YAxis reversed domain={["dataMin - 20", "dataMax + 20"]} tickFormatter={secToMMSS} tick={{ fontSize: 9, fill: "#a5b4fc" }} width={46} axisLine={false} tickLine={false} />
                       <Tooltip formatter={(v) => [secToMMSS(v), predView === "best" ? "Bestwert" : "Prognose"]} {...tipTop(true)} />
@@ -3683,7 +3683,7 @@ function StrVerlaufSection({ log, names }) {
       ) : (
         <div style={{ width: "100%", height: 180 }}>
           <ResponsiveContainer>
-            <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -4 }}>
+            <LineChart data={data} margin={{ top: 8, right: 20, bottom: 0, left: -4 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={gridCol(dark)} />
               <XAxis dataKey="dateLabel" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
               <YAxis width={strTickWidth(type, metric)} domain={domain} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => strFormatTick(type, metric, v)} axisLine={false} tickLine={false} />
@@ -4284,7 +4284,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
         <div className="flex items-center justify-between"><Eyebrow>Schlaf-Verlauf</Eyebrow><TimeRangeSelect value={sleepRange} onChange={setSleepRange} /></div>
         {sleepSeries.length >= 2 ? (
           <div className="mt-2" style={{ width: "100%", height: 170 }}><ResponsiveContainer>
-            <LineChart data={sleepSeries} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+            <LineChart data={sleepSeries} margin={{ top: 5, right: 20, left: -4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={[0, 10]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={32} />
@@ -4651,7 +4651,7 @@ function NutritionTab({ data, setData, plan }) {
       <Card className="p-4">
         <div className="flex items-center justify-between"><Eyebrow>Kalorien-Verlauf</Eyebrow><TimeRangeSelect value={kcalRange} onChange={setKcalRange} only={["d14", "d30", "d90"]} /></div>
         <div style={{ width: "100%", height: 150 }} className="mt-1"><ResponsiveContainer>
-          <ComposedChart data={days14} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+          <ComposedChart data={days14} margin={{ top: 5, right: 20, left: -4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
             <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} width={40} />
@@ -4683,7 +4683,7 @@ function NutritionTab({ data, setData, plan }) {
         </div>
         {wChart.length >= 2 ? (
           <div style={{ width: "100%", height: 140 }} className="mt-2"><ResponsiveContainer>
-            <LineChart data={wChart} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
+            <LineChart data={wChart} margin={{ top: 5, right: 20, left: -4, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
               <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} interval="preserveStartEnd" />
               <YAxis domain={["dataMin - 1", "dataMax + 1"]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={38} tickFormatter={(v) => v.toFixed(1)} />
@@ -5478,7 +5478,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.25` : "Fortschritt wird automatisch gespeichert · v7.25"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.26` : "Fortschritt wird automatisch gespeichert · v7.26"}</span>
           </footer>
         </main>
       </div>
