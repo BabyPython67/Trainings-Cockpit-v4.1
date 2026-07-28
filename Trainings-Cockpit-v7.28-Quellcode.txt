@@ -405,7 +405,16 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
       // Die Ersatz-Einheit selbst lebt NICHT hier, sondern als customLog-Eintrag (linkedSlotUid=it.uid) —
       // WeekRhythm mergt ihn unter der eigenen Sportart ein (s. dort), buildWeekPlan erzeugt dafür anders
       // als beim alten VB-Ausfall+Ersatz-Mechanismus KEIN synthetisches Zusatz-Item.
-      else if (o && o.status === "ersetzt") { it.replaced = true; it.replacedByLogId = o.customLogId; it.originalLoad = it.load; it.load = 0; }
+      // v7.28 (M13): "ersetzt" trägt seit M13 zwei mögliche, sich gegenseitig ausschließende Verknüpfungen
+      // — customLogId (M12, manuell über ReplacePanel) oder runLogId (M13, automatisch erkannter
+      // Lauf-Ersatz aus einem Garmin-Import). isMovable/isExcusable/isReplaceable/weekFulfilled gaten
+      // ausschließlich auf it.replaced/it.load, nicht auf das jeweilige Id-Feld — brauchen deshalb keine
+      // Änderung für den neuen Fall.
+      else if (o && o.status === "ersetzt") {
+        it.replaced = true; it.originalLoad = it.load; it.load = 0;
+        if (o.customLogId) it.replacedByLogId = o.customLogId;
+        if (o.runLogId) it.replacedByRunId = o.runLogId;
+      }
     });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
@@ -459,6 +468,36 @@ function isExcusable(it, data) {
 // !it.tournament-Ausschluss (Spec: Lauf/Kraft/Volleyball/Turnier sind alle ersetzbar).
 function isReplaceable(it, data) {
   return it.load > 0 && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !it.excused && !it.replaced && !(data.done || {})[it.uid];
+}
+/* ==== v7.28 (M13): automatische Erkennung von Lauf-Ersatz aus Garmin-Uploads — baut auf M12 auf, nutzt
+   denselben "ersetzt"-Status mit runLogId statt customLogId (keine customLog-Duplizierung, runLog bleibt
+   unangetastet). Vorschlag NUR bei genau einem geloggten Lauf am Tag — mehrere Läufe am selben Tag lassen
+   sich nicht sicher automatisch zuordnen, dafür bleibt M12s manuelles "Ersetzen" nutzbar (bewusst
+   konservative Entscheidung aus der Kritiker-Debatte). Punkte kommen aus RUN_TYPE[geloggterTyp].load
+   (feste Tabelle nach tatsächlich geloggtem Lauftyp), NICHT aus RPE — beantwortet die bisher offene
+   Testfrage "Punkte vom geplanten oder vom geloggten Lauftyp?" eindeutig: vom geloggten. ==== */
+function findRunMismatch(item, dayISO, runLog) {
+  if (!item || item.sport !== "run" || !(item.load > 0) || item.replaced || item.cancelled || item.excused || item.movedAway) return null;
+  const dayRuns = (runLog || []).filter((r) => r.date === dayISO);
+  if (dayRuns.length !== 1) return null; // 0 oder mehrere Läufe am Tag: keine automatische Zuordnung
+  const run = dayRuns[0];
+  if (!RUN_TYPE[run.type] || run.type === item.type) return null; // unbekannter Typ oder deckt sich bereits
+  return { slotUid: item.uid, runId: run.id, plannedType: item.type, loggedType: run.type };
+}
+function findRunMismatchesForWeek(plan, monday, runLog) {
+  const out = [];
+  plan.forEach((d, i) => {
+    const dayISO = toLocalISO(new Date(monday.getTime() + i * DAY_MS));
+    d.items.forEach((it) => { const m = findRunMismatch(it, dayISO, runLog); if (m) out.push({ ...m, day: d.day, dayISO }); });
+  });
+  return out;
+}
+// Dismiss-Key enthält den GEPLANTEN Typ zum Zeitpunkt des Verwerfens — ändert sich der Plan-Typ des
+// Slots später rückwirkend (z.B. Krankheits-Ramp wandelt "int" zu "easy" um), bleibt eine alte
+// Verwerfung nicht fälschlich auf den neuen Typ-Vergleich angewendet (Kritiker-Fund).
+function visibleRunMismatches(mismatches, dismissed) {
+  const seen = new Set(dismissed || []);
+  return (mismatches || []).filter((m) => !seen.has(`${m.slotUid}|${m.runId}|${m.plannedType}`));
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
 function migrateDone(done) {
@@ -545,7 +584,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [], customLog: [] };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [], customLog: [], dismissedRunMismatches: [] };
 // v7.18: generische Aktivität — Kategorien fürs spätere Filtern ("alle Tests anzeigen"), plus RPE(1-5)->⚡-
 // Zuordnung (grob, da bei manuellen Einträgen kein exakter Sport-Wert vorliegt). Ohne RPE-Angabe: 0⚡
 // (rein informativer Eintrag ohne Last).
@@ -633,7 +672,7 @@ function LoadHelp() {
     </div>
   );
 }
-function WeekRhythm({ plan, week, highlightToday, customLog }) {
+function WeekRhythm({ plan, week, highlightToday, customLog, overrides, runLog }) {
   const dark = useDark();
   const monday = mondayOfWeek(week);
   // v7.0: ausgefallene Einheiten (load 0, aber originalLoad>0) sollen sich sichtbar von einem echten
@@ -652,8 +691,16 @@ function WeekRhythm({ plan, week, highlightToday, customLog }) {
     // gesetzt) hat Vorrang vor rpe, damit die Migration keine Punkte über CUSTOM_RPE_LOAD verliert
     // (s. migrateVbReplacement).
     const customItems = (customLog || []).filter((c) => c.date === iso).map((c) => ({ sport: c.sport || "sonstige", label: c.label, load: c.legacyLoad != null ? c.legacyLoad : (c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0), custom: true, replaced: !!c.linkedSlotUid }));
-    const items = customItems.length ? [...d.items, ...customItems] : d.items;
-    const load = d.load + customItems.reduce((s, c) => s + c.load, 0);
+    // v7.28 (M13): automatisch bestätigter Lauf-Ersatz erzeugt KEINEN customLog-Eintrag (anders als M12)
+    // — overrides referenziert direkt runLogId. Hier analog zu customItems als synthetisches Item
+    // ergänzt, Punkte aus RUN_TYPE[geloggterTyp].load (fest, nicht RPE-basiert).
+    const runReplItems = Object.entries(overrides || {})
+      .filter(([, o]) => o && o.status === "ersetzt" && o.runLogId)
+      .map(([, o]) => (runLog || []).find((r) => r.id === o.runLogId))
+      .filter((r) => r && r.date === iso && RUN_TYPE[r.type])
+      .map((r) => ({ sport: "run", label: RUN_TYPE[r.type].label, load: RUN_TYPE[r.type].load, custom: true, replaced: true }));
+    const items = customItems.length || runReplItems.length ? [...d.items, ...customItems, ...runReplItems] : d.items;
+    const load = d.load + customItems.reduce((s, c) => s + c.load, 0) + runReplItems.reduce((s, r) => s + r.load, 0);
     const cancelledLoad = items.filter((it) => it.cancelled).reduce((s, it) => s + (it.originalLoad || 0), 0);
     // v7.17: "körperlich nicht bereit"/"krank" pro Einheit — eigenes 0-Last-Segment, von "Ausgefallen"
     // farblich/im Muster unterscheidbar (sonst exakt die v7.14-Fehlerklasse: neue 0-Last-Kategorie
@@ -1913,7 +1960,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
             </span>
           )}
         </div>
-        <WeekRhythm plan={plan} week={currentWeek} highlightToday customLog={data.customLog} />
+        <WeekRhythm plan={plan} week={currentWeek} highlightToday customLog={data.customLog} overrides={data.overrides} runLog={data.runLog} />
         <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
           {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: MANUAL_SPORT.color }} /> {MANUAL_SPORT.label}</span>
@@ -2189,7 +2236,11 @@ function ExcusePanel({ item, data, setData }) {
    Ausbauplan gebaut, nicht aus dem von Mirko ursprünglich freigegebenen HTML-Sample (kein Dateizugriff
    darauf in dieser Session) — bei Abweichungen von der erwarteten Interaktion bitte melden. ==== */
 function ReplacePanel({ item, dateISO, data, setData }) {
-  const linked = item.replaced ? (data.customLog || []).find((c) => c.id === item.replacedByLogId) : null;
+  const linked = item.replaced && item.replacedByLogId ? (data.customLog || []).find((c) => c.id === item.replacedByLogId) : null;
+  // v7.28 (M13): automatisch bestätigter Lauf-Ersatz hat KEINEN customLog-Eintrag, sondern verlinkt
+  // direkt auf einen runLog-Eintrag — eigener, expliziter Anzeige-/Rückgängig-Pfad statt sich auf einen
+  // zufälligen No-op im customLog-Pfad zu verlassen (Kritiker-Fund aus der M13-Debatte).
+  const linkedRun = item.replaced && item.replacedByRunId ? (data.runLog || []).find((r) => r.id === item.replacedByRunId) : null;
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ sport: "run", label: "", durationMin: "", rpe: "", runType: "", km: "" });
   const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
@@ -2212,8 +2263,12 @@ function ReplacePanel({ item, dateISO, data, setData }) {
   };
   // Rückgängig entfernt Override UND verlinkten customLog-Eintrag zusammen — sonst bliebe ein
   // verwaister Eintrag mit baumelndem linkedSlotUid zurück (M12-Akzeptanzkriterium).
+  // v7.28 (M13): beim runLogId-Fall wird NUR der Override entfernt — runLog bleibt in jedem Fall
+  // unangetastet (M13-Akzeptanzkriterium: der Lauf-Eintrag selbst wird durch Rückgängig nicht gelöscht,
+  // es war ja ein echter, eigenständig geloggter Lauf).
   const revert = () => setData((d) => {
     const o = { ...(d.overrides || {}) }; delete o[item.uid];
+    if (item.replacedByRunId) return { ...d, overrides: o };
     const customLog = (d.customLog || []).filter((c) => c.id !== item.replacedByLogId);
     return { ...d, overrides: o, customLog };
   });
@@ -2224,6 +2279,12 @@ function ReplacePanel({ item, dateISO, data, setData }) {
           <SportGlyph sport={linked.sport} size={13} /> Ersatz: <b>{linked.label}</b>
           {linked.durationMin ? ` · ${linked.durationMin} Min` : ""}
           {linked.sport === "run" && linked.km ? ` · ${linked.km} km` : ""}
+        </div>
+      )}
+      {linkedRun && (
+        <div className="text-xs text-slate-600 flex items-center gap-1.5">
+          <SportGlyph sport="run" size={13} /> Ersatz (aus Garmin-Import): <b>{RUN_TYPE[linkedRun.type]?.label || linkedRun.type}</b>
+          {linkedRun.dist ? ` · ${linkedRun.dist} km` : ""}{linkedRun.sec ? ` · ${secToMMSS(linkedRun.sec)}` : ""}
         </div>
       )}
       <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ersatz zurücknehmen</button>
@@ -2262,6 +2323,39 @@ function ReplacePanel({ item, dateISO, data, setData }) {
   );
 }
 
+/* ==== v7.28 (M13): Vorschlags-Banner für einen automatisch erkannten Lauf-Ersatz — Mirko bestätigt oder
+   verwirft aktiv, nie automatische Übernahme (kein setData außerhalb der beiden Klick-Handler unten,
+   die von WeekTab hereingereicht werden). Soll-Wert-Anzeige bewusst NUR bei Easy (Spec-Vorgabe) — ein
+   striktes ===, kein switch mit Default-Fall, damit kein anderer Lauftyp versehentlich durchrutscht.
+   Hinweis: dieses Banner ist aus der Text-Spezifikation im Ausbauplan gebaut, nicht aus dem von Mirko
+   ursprünglich freigegebenen HTML-Sample (kein Dateizugriff darauf in dieser Session) — bei Abweichungen
+   von der erwarteten Interaktion bitte melden. ==== */
+function RunMismatchBanner({ m, run, illnessLog, planEndMode, onConfirm, onDismiss }) {
+  const dark = useDark();
+  if (!run) return null;
+  const target = m.loggedType === "easy" ? planRunTargets(m.dayISO, "easy", illnessLog, planEndMode) : null;
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  return (
+    <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: "#7c3aed55", background: dark ? "#2e106533" : "#faf5ff" }}>
+      <div className="text-xs font-semibold" style={{ color: safeText(dark, "#7c3aed") }}>
+        Geloggter Lauf weicht vom Plan ab: <b>{RUN_TYPE[m.loggedType].label}</b> statt <b>{RUN_TYPE[m.plannedType].label}</b>
+      </div>
+      <div className="text-xs text-slate-600">
+        {run.dist} km · {secToMMSS(run.sec)}{run.pace ? ` · ${secToMMSS(run.pace)}/km` : ""}{run.hrAvg ? ` · Ø ${run.hrAvg} bpm` : ""}
+      </div>
+      {target && target.week != null && (
+        <div className="text-xs text-slate-500">
+          Aktuelles Easy-Ziel: {target.hrLabel ? `HF ${target.hrLabel}` : "—"}{target.pace ? ` · ${secToMMSS(target.pace)}/km` : ""}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button onClick={onConfirm} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Als Ersatz übernehmen</button>
+        <button onClick={onDismiss} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Verwerfen</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -2278,6 +2372,14 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const effW = isTestWeek ? TOTAL_WEEKS : effectiveWeek(week, data.illnessLog);
   const isRegen = !!REGEN[effW];
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
+  // v7.28 (M13): Vorschläge für die aktuell angezeigte Woche — rein lesend, schreibt nie von selbst in
+  // overrides (nur confirmMismatch/dismissMismatch nach explizitem Klick tun das).
+  const mismatches = useMemo(
+    () => visibleRunMismatches(findRunMismatchesForWeek(plan, meta.monday, data.runLog), data.dismissedRunMismatches),
+    [plan, meta.monday, data.runLog, data.dismissedRunMismatches]
+  );
+  const confirmMismatch = (m) => setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [m.slotUid]: { status: "ersetzt", runLogId: m.runId } } }));
+  const dismissMismatch = (m) => setData((d) => ({ ...d, dismissedRunMismatches: [...(d.dismissedRunMismatches || []), `${m.slotUid}|${m.runId}|${m.plannedType}`] }));
 
   return (
     <div className="space-y-4">
@@ -2335,6 +2437,11 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                     />
                   );
                 })}
+                {mismatches.filter((m) => m.day === d.day).map((m) => (
+                  <RunMismatchBanner key={`${m.slotUid}-${m.runId}`} m={m} run={data.runLog.find((r) => r.id === m.runId)}
+                    illnessLog={data.illnessLog} planEndMode={data.planEndMode}
+                    onConfirm={() => confirmMismatch(m)} onDismiss={() => dismissMismatch(m)} />
+                ))}
               </div>
             </Card>
           );
@@ -5234,7 +5341,14 @@ function CalendarTab({ data }) {
         load: c.legacyLoad != null ? c.legacyLoad : (c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0),
         custom: true, replacementFor: c.linkedSlotUid,
       }));
-      out[iso] = { items: [...items, ...replacementItems], school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
+      // v7.28 (M13): automatisch bestätigter Lauf-Ersatz hat keinen customLog-Eintrag — Gegenstück aus
+      // overrides+runLog analog ergänzt, sonst fehlt die Ersatz-Aktivität im Kalender für diesen Fall.
+      const runReplacementItems = Object.entries(data.overrides || {})
+        .filter(([, o]) => o && o.status === "ersetzt" && o.runLogId)
+        .map(([uid, o]) => ({ uid, r: (data.runLog || []).find((r) => r.id === o.runLogId) }))
+        .filter(({ r }) => r && r.date === iso && RUN_TYPE[r.type])
+        .map(({ uid, r }) => ({ uid: `cal-run-${r.id}`, sport: "run", label: RUN_TYPE[r.type].label, load: RUN_TYPE[r.type].load, custom: true, replacementFor: uid }));
+      out[iso] = { items: [...items, ...replacementItems, ...runReplacementItems], school: data.schoolLog.filter((s) => s.faelligkeit === iso) };
     }
     return out;
   }, [days, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides, data.schoolLog]);
@@ -5617,7 +5731,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.27` : "Fortschritt wird automatisch gespeichert · v7.27"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.28` : "Fortschritt wird automatisch gespeichert · v7.28"}</span>
           </footer>
         </main>
       </div>
