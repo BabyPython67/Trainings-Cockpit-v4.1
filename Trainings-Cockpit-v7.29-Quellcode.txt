@@ -672,6 +672,67 @@ function LoadHelp() {
     </div>
   );
 }
+const LOAD_TREND_META = {
+  safe: { label: "Im Rahmen", color: "#10b981", tint: "#ecfdf5", deep: "#047857" },
+  // v7.29: Amber statt Rot (Mirkos Wunsch nach Design-Review) — Rot ist in der App bereits fest mit
+  // "Krank"/Illness-Karten assoziiert; diese Karte ist ausdrücklich KEINE medizinische Bewertung.
+  warn: { label: "Deutlicher Anstieg", color: "#f59e0b", tint: "#fffbeb", deep: "#b45309" },
+  neutral: { label: "Noch zu wenig Daten", color: "#94a3b8", tint: "#f1f5f9", deep: "#475569" },
+};
+/* ==== v7.29 (M5): Wochenlast-Trend/Belastungsampel-Karte — Design vorab per Artifact-Muster mit
+   Mirko abgestimmt (Ampel-Pille mit Text statt nur Farbe, Trend-Chart mit "Normalbereich"-Referenzband
+   statt bezugsloser Linie, vorsichtiger Hinweistext). `history42` deckt 42 Tage, `status` kommt aus
+   loadTrendStatus(history42) (nutzt intern nur die letzten 28 Tage). ==== */
+function LoadTrendCard({ history42, status }) {
+  const dark = useDark();
+  const meta = LOAD_TREND_META[status.state];
+  const weeklyPoints = status.state !== "neutral" && history42 && history42.length >= 42
+    ? Array.from({ length: 6 }, (_, i) => ({ idx: i, sum: history42.slice(i * 7, i * 7 + 7).reduce((s, d) => s + d.load, 0) }))
+    : [];
+  // Chart-Referenzband "Normalbereich" [0.8, ACWR_WARN_THRESHOLD] × chronischer Ø — 0.8 ist wie
+  // ACWR_WARN_THRESHOLD ein erster plausibler, nicht empirisch validierter Wert (nur fürs Chart-Band,
+  // nicht für Zustand/Text: der basiert allein auf ACWR_WARN_THRESHOLD, s. o.).
+  const bandLo = status.chronicAvgPerWeek != null ? status.chronicAvgPerWeek * 0.8 : null;
+  const bandHi = status.chronicAvgPerWeek != null ? status.chronicAvgPerWeek * ACWR_WARN_THRESHOLD : null;
+  // v7.29-Fund (Verify-Script): bei sehr konstanter Last liegen alle Wochenpunkte dicht beieinander —
+  // eine reine dataMin/dataMax-Domain wäre dann schmaler als das Referenzband selbst, das Band würde
+  // unsichtbar bleiben, genau dann wenn "im Normalbereich" am deutlichsten sichtbar sein sollte. Domain
+  // bezieht deshalb bandLo/bandHi mit ein.
+  const chartValues = weeklyPoints.map((p) => p.sum).concat(bandLo != null ? [bandLo, bandHi] : []);
+  const chartDomain = chartValues.length ? [Math.min(...chartValues) - 4, Math.max(...chartValues) + 4] : undefined;
+  return (
+    <Card className="p-4">
+      <Eyebrow>Trainingsbelastung</Eyebrow>
+      <div className="flex items-baseline gap-2 mt-1.5 mb-1 flex-wrap">
+        <span className="font-num text-2xl font-bold leading-none" style={{ color: safeText(dark, status.state === "neutral" ? "#94a3b8" : "#0f172a") }}>
+          {status.ratio != null ? status.ratio.toFixed(1) : "—"}
+        </span>
+        <span className="text-[11px] font-semibold rounded-full px-2.5 py-0.5" style={{ background: softBg(dark, meta.color, meta.tint), color: safeText(dark, meta.deep) }}>{meta.label}</span>
+      </div>
+      {status.state === "neutral" ? (
+        <div className="text-xs text-slate-500 leading-relaxed">Erst ab 4 Wochen Trainingsdaten (ohne Krankheitspause) lässt sich ein verlässlicher Vergleichswert bilden.</div>
+      ) : (
+        <>
+          <div className="text-xs text-slate-500 leading-relaxed">
+            Letzte 7 Tage: <b className="font-num">⚡{status.acute7}</b> · Ø letzte 4 Wochen: <b className="font-num">⚡{Math.round(status.chronicAvgPerWeek)}</b>.{" "}
+            {status.state === "warn" ? "Deutlich mehr als sonst — in den nächsten Tagen bewusst auf dein Körpergefühl achten." : "Dein Anstieg bewegt sich im normalen Bereich."}
+          </div>
+          {weeklyPoints.length === 6 && (
+            <div style={{ width: "100%", height: 68 }} className="mt-2"><ResponsiveContainer>
+              <LineChart data={weeklyPoints} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                {bandLo != null && <ReferenceArea y1={bandLo} y2={bandHi} fill={meta.color} fillOpacity={dark ? 0.16 : 0.12} strokeOpacity={0} />}
+                <YAxis hide domain={chartDomain} />
+                <XAxis dataKey="idx" tick={{ fontSize: 9, fill: "#94a3b8" }} tickFormatter={(v) => (v === 0 ? "vor 5 Wo." : v === 5 ? "heute" : "")} interval="preserveStartEnd" axisLine={false} tickLine={false} />
+                <Line type="monotone" dataKey="sum" stroke={meta.color} strokeWidth={2.5} dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer></div>
+          )}
+        </>
+      )}
+      <div className="mt-2 text-[10px] text-slate-400 leading-relaxed border-t border-slate-100 pt-2">Trainingssignal, keine medizinische Bewertung. Ersetzt keine ärztliche Einschätzung bei echten Beschwerden.</div>
+    </Card>
+  );
+}
 function WeekRhythm({ plan, week, highlightToday, customLog, overrides, runLog }) {
   const dark = useDark();
   const monday = mondayOfWeek(week);
@@ -1022,6 +1083,86 @@ function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode, over
   for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode, overrides)) s++; else break; }
   if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode, overrides)) s++;
   return s;
+}
+
+/* ==== v7.29 (M5): Wochenlast-Trend / Belastungsampel — vergleicht die Belastungspunkte der letzten
+   7 Tage mit dem Schnitt der letzten 4 Wochen (vereinfachtes "akut:chronisch"-Konzept aus dem
+   Ausdauersport). Reine Auswertung bereits geloggter Daten, kein Eingriff in buildWeekPlan/den
+   Plan-Algorithmus selbst. Nutzt bewusst rohe Kalendertage/-daten statt Plan-Wochennummern — die
+   Krankheits-/effectiveWeek-Logik verschiebt nur INHALTE künftiger Plan-Wochen, nie die Kalenderdaten
+   vergangener, bereits geloggter Tage, betrifft diese Auswertung also nicht direkt (sehr wohl aber die
+   Frage, ob ein Tag als "krank" zählt, s. u.). ==== */
+const ACWR_WARN_THRESHOLD = 1.3; // erster plausibler Wert aus der Sportwissenschaft (akute:chronische Trainingslast), NICHT empirisch für Mirko validiert — wie STOP_RATIO_THRESHOLD/HR_PEAK_MARGIN_BPM. Taucht bewusst NIE im UI auf, nur die qualitative Einordnung (safe/warn) und die rohen ⚡-Werte.
+const LOAD_TREND_MIN_CHRONIC_DAYS = 14; // von 28 Fenstertagen müssen mind. so viele NICHT krank sein (s. u.)
+// Tatsächliche (nicht geplante!) Belastungspunkte für EINEN Kalendertag — mirrort WeekRhythms
+// Drei-Quellen-Summe (Plan-Items/customLog/Lauf-Ersatz), aber NUR für Plan-Items, die wirklich
+// abgehakt wurden (done[uid]===true). WeekRhythm zeigt bewusst die GEPLANTE Wochenlast (auch für noch
+// nicht abgehakte Zukunftstage) — für eine "was wurde wirklich trainiert"-Kennzahl wäre das falsch.
+function actualLoadForDate(dateISO, dayItems, done, customLog, overrides, runLog) {
+  let sum = 0;
+  (dayItems || []).forEach((it) => { if ((done || {})[it.uid]) sum += it.load || 0; });
+  (customLog || []).filter((c) => c.date === dateISO).forEach((c) => {
+    sum += c.legacyLoad != null ? c.legacyLoad : (c.rpe ? (CUSTOM_RPE_LOAD[c.rpe] || 0) : 0);
+  });
+  Object.values(overrides || {}).forEach((o) => {
+    if (o && o.status === "ersetzt" && o.runLogId) {
+      const r = (runLog || []).find((x) => x.id === o.runLogId);
+      if (r && r.date === dateISO && RUN_TYPE[r.type]) sum += RUN_TYPE[r.type].load;
+    }
+  });
+  return sum;
+}
+// {date, load, sick, beforePlan}-Liste für `days` Kalendertage rückwärts ab (inkl.) endDateISO.
+// Cached buildWeekPlan pro Plan-Woche statt pro Tag neu aufzurufen. `sick` (illnessPhaseForDate==="sick")
+// und `beforePlan` (Tag liegt vor PLAN_START) werden hier nur MARKIERT, nicht schon herausgefiltert —
+// die Entscheidung, was das für die Kennzahl bedeutet, gehört in loadTrendStatus.
+function buildLoadHistory(endDateISO, days, { done, customLog, overrides, runLog, vbSlots, illnessLog, planEndMode }) {
+  const out = [];
+  const planCache = {};
+  const end = new Date(endDateISO + "T12:00:00");
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(end.getTime() - i * DAY_MS);
+    const dISO = toLocalISO(d);
+    const beforePlan = d < PLAN_START;
+    let load = 0;
+    if (!beforePlan) {
+      const w = rawPlanWeekOf(d, illnessLog, planEndMode);
+      const dayItems = w ? (planCache[w] || (planCache[w] = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode, overrides))).find((p) => p.day === DAYS[(d.getDay() + 6) % 7])?.items : [];
+      load = actualLoadForDate(dISO, dayItems, done, customLog, overrides, runLog);
+    }
+    out.push({ date: dISO, load, sick: illnessPhaseForDate(d, illnessLog) === "sick", beforePlan });
+  }
+  return out;
+}
+// Verhältnis + Einordnung aus einer >=28 Tage umfassenden Historie (letzter Eintrag = "heute").
+// v7.29-Kritiker-Fund: eine mehrtägige Krankheitsphase im 28-Tage-Fenster darf NICHT einfach als
+// "0 Last, zählt normal mit" in den Nenner — sonst sackt der chronische Vergleichswert nach einer
+// Krankheit künstlich ab und jede Rückkehr zu normalem Training erzeugt Wochen später ein absurd hohes,
+// bedeutungsloses Ratio (rechnerisch nachvollzogen: 11 Tage Krankheit + 3 Tage Aufbau im 28-Tage-Fenster
+// hätten das Ratio auf ~2.0 statt eines echten Werts getrieben) — ausgerechnet in der Wiedereinstiegs-
+// Phase, in der die App selbst zur Vorsicht rät. Fix: kranke Tage fließen weder in Zähler noch Nenner
+// des chronischen Schnitts ein; der Schnitt wird auf "pro Woche NICHT-kranker Trainingstage" hochgerechnet
+// statt einfach durch 4 Kalenderwochen zu teilen. Braucht dafür mindestens LOAD_TREND_MIN_CHRONIC_DAYS
+// echte (nicht-kranke) Tage im Fenster, sonst bleibt die Kennzahl ehrlich unsicher (state "neutral").
+function loadTrendStatus(history) {
+  if (!history || history.length < 28 || history.slice(-28).some((d) => d.beforePlan)) {
+    return { ratio: null, state: "neutral", acute7: null, chronicAvgPerWeek: null };
+  }
+  const last7 = history.slice(-7);
+  const last28 = history.slice(-28);
+  // acute7 zählt kranke Tage bewusst NICHT heraus (anders als der chronische Nenner unten): wer trotz
+  // Krank-Phase real trainiert (customLog/Lauf-Ersatz), dessen tatsächliche Last soll im Akutwert
+  // sichtbar bleiben — nur der 4-Wochen-Vergleichswert braucht den Krankheits-Ausschluss (s. Kommentar
+  // bei loadTrendStatus oben).
+  const acute7 = last7.reduce((s, d) => s + d.load, 0);
+  const chronicNonSick = last28.filter((d) => !d.sick);
+  if (chronicNonSick.length < LOAD_TREND_MIN_CHRONIC_DAYS) {
+    return { ratio: null, state: "neutral", acute7, chronicAvgPerWeek: null };
+  }
+  const chronicAvgPerWeek = (chronicNonSick.reduce((s, d) => s + d.load, 0) / chronicNonSick.length) * 7;
+  if (chronicAvgPerWeek <= 0) return { ratio: null, state: "neutral", acute7, chronicAvgPerWeek: 0 };
+  const ratio = Math.round((acute7 / chronicAvgPerWeek) * 100) / 100;
+  return { ratio, state: ratio >= ACWR_WARN_THRESHOLD ? "warn" : "safe", acute7, chronicAvgPerWeek: Math.round(chronicAvgPerWeek * 10) / 10 };
 }
 
 /* ===================== v7.0: Auszeichnungen (kuratiert) & Gesamtstatistik ===================== */
@@ -1802,6 +1943,13 @@ function BadgePopup({ badges, data, setData, dark }) {
 function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badges, streak, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
   const dark = useDark();
   const today = new Date();
+  // v7.29 (M5): 42 Tage Ist-Last-Historie einmal berechnen — deckt sowohl das 28-Tage-Fenster für
+  // loadTrendStatus als auch die 6 Wochenpunkte des Trend-Charts ab, ohne doppelt zu rechnen.
+  const loadHistory42 = useMemo(
+    () => buildLoadHistory(toLocalISO(today), 42, { done: data.done, customLog: data.customLog, overrides: data.overrides, runLog: data.runLog, vbSlots: data.vbSlots, illnessLog: data.illnessLog, planEndMode: data.planEndMode }),
+    [data.done, data.customLog, data.overrides, data.runLog, data.vbSlots, data.illnessLog, data.planEndMode]
+  );
+  const loadTrend = useMemo(() => loadTrendStatus(loadHistory42), [loadHistory42]);
   const todayKey = DAYS[(today.getDay() + 6) % 7];
   const todayPlan = plan.find((d) => d.day === todayKey);
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
@@ -1972,6 +2120,8 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
         </div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
+
+      <LoadTrendCard history42={loadHistory42} status={loadTrend} />
 
       {/* Prioritäten */}
       <Card className="p-4">
@@ -5731,7 +5881,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.28` : "Fortschritt wird automatisch gespeichert · v7.28"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.29` : "Fortschritt wird automatisch gespeichert · v7.29"}</span>
           </footer>
         </main>
       </div>
