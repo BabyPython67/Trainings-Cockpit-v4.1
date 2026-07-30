@@ -586,7 +586,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [], customLog: [], dismissedRunMismatches: [] };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed", overrides: {}, hiddenBadgeIds: [], seenBadgeIds: [], customLog: [], dismissedRunMismatches: [], seenIntroHints: {} };
 // v7.18: generische Aktivität — Kategorien fürs spätere Filtern ("alle Tests anzeigen"), plus RPE(1-5)->⚡-
 // Zuordnung (grob, da bei manuellen Einträgen kein exakter Sport-Wert vorliegt). Ohne RPE-Angabe: 0⚡
 // (rein informativer Eintrag ohne Last).
@@ -715,7 +715,8 @@ function LoadTrendCard({ history42, status }) {
         <div className="text-xs text-slate-500 leading-relaxed">Erst ab 4 Wochen Trainingsdaten (ohne Krankheitspause) lässt sich ein verlässlicher Vergleichswert bilden.</div>
       ) : (
         <>
-          <div className="text-xs text-slate-500 leading-relaxed">
+          {/* U18 Punkt 4: von text-xs text-slate-500 auf die leise Fußnoten-Stufe zurückgestuft */}
+          <div className="text-[10.5px] text-slate-400 leading-relaxed">
             Letzte 7 Tage: <b className="font-num">⚡{status.acute7}</b> · Ø letzte 4 Wochen: <b className="font-num">⚡{Math.round(status.chronicAvgPerWeek)}</b>.{" "}
             {status.state === "warn" ? "Deutlich mehr als sonst — in den nächsten Tagen bewusst auf dein Körpergefühl achten." : "Dein Anstieg bewegt sich im normalen Bereich."}
           </div>
@@ -2476,9 +2477,9 @@ function ReplacePanel({ item, dateISO, data, setData }) {
   if (!showForm) return <button onClick={() => setShowForm(true)} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ersetzen</button>;
   return (
     <div className="space-y-2">
-      <div className="flex gap-1.5">{["run", "vb", "strength"].map((s) => (
-        <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: SPORT[s].color } : {}}>
-          <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {SPORT[s].label}
+      <div className="flex gap-1.5">{["run", "vb", "strength", "sonstige"].map((s) => (
+        <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: (SPORT[s] || MANUAL_SPORT).color } : {}}>
+          <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {s === "sonstige" ? "Sonstige" : SPORT[s].label}
         </button>
       ))}</div>
       <input placeholder="Was hast du stattdessen gemacht? (z. B. Schwimmen, Home-Workout)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input" />
@@ -2567,6 +2568,26 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   // gebunden (nicht fest an currentWeek), passend zum bestehenden Wochen-Navigator direkt darüber.
   const weekLoad = plan.reduce((s, d) => s + d.load, 0);
   const prevWeekLoad = week > 1 ? plannedWeekLoad(week - 1, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides) : null;
+  // U13: heutiger Tag ohne Scrollen sichtbar — beim Betreten der aktuellen Woche direkt zur Heute-Karte
+  // springen, unabhängig vom Wochentag (sonst wäre z. B. Samstag erst nach viel Scrollen sichtbar).
+  const todayRef = useRef(null);
+  useEffect(() => { if (todayRef.current) todayRef.current.scrollIntoView({ block: "center" }); }, []);
+  // U13: Zusammenfassungszeile für vergangene, nicht erledigte Tage — dieselbe offen/vorbei-Bedingung
+  // wie U3/U5, hier nur für die aktuelle Woche zusammengefasst statt jeden Tag einzeln aufzuklappen.
+  const missedDays = useMemo(() => {
+    if (week !== currentWeek) return [];
+    const out = [];
+    plan.forEach((d) => {
+      const date = new Date(meta.monday.getTime() + DAYS.indexOf(d.day) * DAY_MS);
+      if (atMidnight(date) >= atMidnight(new Date())) return;
+      const openCount = d.items.filter((it) => it.load > 0 && !data.done[it.uid] && !it.cancelled && !it.excused && !it.movedAway && !it.replaced).length;
+      if (openCount > 0) out.push({ day: d.day, count: openCount });
+    });
+    return out;
+  }, [plan, week, currentWeek, meta.monday, data.done]);
+  const missedSummary = missedDays.length
+    ? `${missedDays[0].day}${missedDays.length > 1 ? `–${missedDays[missedDays.length - 1].day}` : ""}: ${missedDays.reduce((s, m) => s + m.count, 0)} Einheiten offen`
+    : null;
 
   return (
     <div className="space-y-4">
@@ -2603,14 +2624,20 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
         <div className="flex gap-2">{[1, 2].map((p) => <button key={p} onClick={() => setPhaseView(p)} className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold border transition ${phaseView === p ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={phaseView === p ? { background: p === 1 ? "#d97706" : "#7c3aed" } : {}}>{PHASE[p].short}</button>)}</div>
       )}
 
-      <Card className="p-3.5"><div className="flex items-start gap-2"><Info size={15} className="text-slate-400 mt-0.5 shrink-0" /><p className="text-xs text-slate-600 leading-relaxed">{ph.desc}</p></div></Card>
+      {/* U13: Erklärabsatz hinter Antippen statt permanent sichtbar (inline, N2) */}
+      <InfoToggle label={`${ph.name}: Wie ist die Woche aufgebaut?`}>{ph.desc}</InfoToggle>
 
       {meta.hasT && <Card className="p-3.5" style={panel(dark, "#f59e0b", "#fff7ed", "#fbbf24")}><div className="flex items-start gap-2"><Trophy size={16} className="text-amber-600 mt-0.5 shrink-0" /><p className="text-xs text-amber-900 leading-relaxed"><b>Turnierwoche.</b> Mo/Di bewusst locker, Intervalle entfallen — am Mittwoch frische Beine fürs Turnier. Danach normaler Aufbau.</p></div></Card>}
       {isRegen && effPhase === 2 && <Card className="p-3.5" style={panel(dark, "#10b981", "#ecfdf5", "#6ee7b7")}><p className="text-xs leading-relaxed text-emerald-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa) — genau deshalb liegt hier die schwere Bein-/Power-Einheit: die Beine sind frei und haben bis zur nächsten harten Laufwoche Zeit zu erholen.</p></Card>}
       {isRegen && effPhase === 1 && <Card className="p-3.5" style={panel(dark, "#10b981", "#ecfdf5", "#6ee7b7")}><p className="text-xs leading-relaxed text-emerald-800"><b>Regenerationswoche.</b> Laufumfang reduziert (nur Mo/Mi/Sa). Volleyball & leichte Kraft laufen weiter — Erholung aktiv steuern.</p></Card>}
       {isTestWeek && <Card className="p-3.5" style={panel(dark, "#8b5cf6", "#f5f3ff", "#c4b5fd")}><p className="text-xs leading-relaxed" style={{ color: dark ? "#c4b5fd" : "#6d28d9" }}><b>Testwoche.</b> 5-km-Bestzeit am Mittwoch. Mo & Di sind echte Ruhetage, und das Mittwochs-Volleyball pausiert an dem Tag — Freitag geht's normal weiter.</p></Card>}
 
-      <div className="flex justify-end"><LoadHelp /></div>
+      <div className="flex items-center justify-between gap-2">
+        {missedSummary ? (
+          <span className="text-[11px] font-semibold" style={{ color: dark ? "#fbbf24" : "#b45309" }}>{missedSummary}</span>
+        ) : <span />}
+        <LoadHelp />
+      </div>
 
       <div className="space-y-2.5">
         {plan.map((d) => {
@@ -2618,7 +2645,8 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
           const isToday = week === currentWeek && isSameDay(date, new Date());
           const isPast = atMidnight(date) < atMidnight(new Date()); // U5: heute zählt bewusst nicht als "vorbei"
           return (
-            <Card key={d.day} className="overflow-hidden" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
+            <div key={d.day} ref={isToday ? todayRef : undefined}>
+            <Card className={`overflow-hidden ${isToday ? "tc-today-ring" : ""}`} style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
               <div className="flex items-center gap-3 px-3.5 pt-3 pb-2">
                 <div className="text-center w-9 shrink-0"><div className={`font-display font-bold ${isToday ? "text-indigo-600" : "text-slate-800"}`}>{d.day}</div><div className="text-[10px] text-slate-400 font-num">{fmtDM(date)}</div></div>
                 <div className="flex flex-wrap gap-1.5">{d.items.map((it, i) => it.tournament ? <span key={i} className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-semibold text-amber-950"><Trophy size={11} /> Turnier</span> : <SportChip key={i} sport={it.sport} small />)}</div>
@@ -2655,6 +2683,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                 ))}
               </div>
             </Card>
+            </div>
           );
         })}
       </div>
@@ -3924,6 +3953,10 @@ function StrEntryForm({ log, typeMemory, editEntry, onSave, onCancelEdit, onDele
 
   const trimmedName = name.trim();
   const isKnown = trimmedName && knownNames.some((n) => n.toLowerCase() === trimmedName.toLowerCase());
+  // U10/U18 Punkt 1: Baseline-Kasten rendert nur noch, solange tatsächlich Baseline-Werte fehlen —
+  // ableitbar aus log (mind. ein Eintrag je der 7 Baseline-Übungen), keine neue Datenspur.
+  const baselineDone = BASELINE.every((b) => log.some((e) => e.exercise === b.replace(/\s*\(.*\)/, "")));
+  const saveDisabled = !trimmedName || !sets.some((s) => isSetFilled(type, s));
 
   return (
     <Card className="p-4">
@@ -3932,7 +3965,7 @@ function StrEntryForm({ log, typeMemory, editEntry, onSave, onCancelEdit, onDele
         {isEdit && <span className="text-[11px] font-num text-slate-400">{fmtISOshort(editEntry.date)}</span>}
       </div>
 
-      {!isEdit && (
+      {!isEdit && !baselineDone && (
         <div className="mt-3 mb-1 rounded-xl p-3" style={panel(dark, "#0d9488", "#f0fdfa", "#99f6e4")}>
           <div className="flex items-start gap-2"><Info size={15} className="mt-0.5 shrink-0" style={{ color: safeText(dark, "#0d9488") }} /><p className="text-xs leading-relaxed" style={{ color: safeText(dark, "#0f766e") }}><b>Noch keine Maximalwerte?</b> Mach einmalig einen Baseline-Test mit sauberer Technik, dann hast du Startwerte zum Vergleichen. Tippe eine Übung zum Vorausfüllen an:</p></div>
           <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -4007,11 +4040,13 @@ function StrEntryForm({ log, typeMemory, editEntry, onSave, onCancelEdit, onDele
       <button
         type="button"
         onClick={handleSave}
-        disabled={!trimmedName || !sets.some((s) => isSetFilled(type, s))}
+        disabled={saveDisabled}
         className="w-full rounded-2xl bg-teal-600 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold py-3.5 text-sm"
       >
         {isEdit ? "Änderungen speichern" : "Übung speichern"}
       </button>
+      {/* U10: am ausgegrauten Speichern-Knopf steht, was zum Aktivieren noch fehlt */}
+      {saveDisabled && <div className="text-[10.5px] text-slate-400 mt-1.5 text-center">{!trimmedName ? "Übungsname fehlt" : "Mindestens eine ausgefüllte Serie nötig"}</div>}
       {isEdit && (
         <div className="flex items-center justify-between mt-2.5">
           <button type="button" onClick={onCancelEdit} className="text-xs font-semibold text-slate-500">Abbrechen</button>
@@ -4342,17 +4377,28 @@ function StrengthProgress({ data, setData }) {
     setData((d) => ({ ...d, strengthLog: reorderStrengthLogDay(d.strengthLog, date, orderedIds) }));
   };
 
+  // U10: Bestwerte + Datum der letzten Krafteinheit zuerst, Formular darunter — lastDate aus log selbst,
+  // keine neue Berechnung (dieselbe Sortierung wie in StrHistorieSection).
+  const lastDate = log.length ? [...log].sort((a, b) => b.date.localeCompare(a.date))[0].date : null;
+  // Formular steht jetzt unter den Bestwerten — "Bearbeiten" (aus der Historie weiter unten) scrollt
+  // dorthin, analog zum selben Muster in SchoolTab (U12).
+  const formRef = useRef(null);
+  useEffect(() => { if (editEntry && formRef.current) formRef.current.scrollIntoView({ behavior: "smooth", block: "start" }); }, [editEntry]);
+
   return (
     <div className="space-y-4">
-      <StrEntryForm
-        log={log}
-        typeMemory={typeMemory}
-        editEntry={editEntry}
-        onSave={saveEntry}
-        onCancelEdit={() => setEditEntry(null)}
-        onDelete={deleteEntry}
-      />
+      {lastDate && <div className="text-[11px] text-slate-400">Letzte Krafteinheit: {fmtISOshort(lastDate)}</div>}
       <StrBestwerteGrid log={log} names={names} />
+      <div ref={formRef}>
+        <StrEntryForm
+          log={log}
+          typeMemory={typeMemory}
+          editEntry={editEntry}
+          onSave={saveEntry}
+          onCancelEdit={() => setEditEntry(null)}
+          onDelete={deleteEntry}
+        />
+      </div>
       {names.length > 0 && <StrVerlaufSection log={log} names={names} />}
       <StrHistorieSection log={log} illnessLog={data.illnessLog} planEndMode={data.planEndMode} onEditEntry={setEditEntry} onReorderDay={reorderDay} />
       <UndoToast undo={undo} onUndo={doUndo} />
@@ -4391,20 +4437,7 @@ function CustomActivityProgress({ data, setData }) {
   const list = data.customLog.filter((c) => !c.linkedSlotUid).filter((c) => filterCat === "all" || c.category === filterCat).sort((a, b) => b.date.localeCompare(a.date));
   return (
     <div className="space-y-4">
-      <Card className="p-4" style={panel(dark, MANUAL_SPORT.color, MANUAL_SPORT.tint, "#e9d5ff")}>
-        <div className="flex items-start gap-2"><Info size={15} className="mt-0.5 shrink-0" style={{ color: safeText(dark, MANUAL_SPORT.color) }} /><p className="text-xs leading-relaxed" style={{ color: safeText(dark, MANUAL_SPORT.deep) }}><b>Für alles, was zu keinem Plan-Slot gehört</b> — Reaktivierungs-Läufe, ein Kalibrierungs-Test, eine spontane Zusatzeinheit. Für normale Läufe nach Plan bitte weiter „Laufzeiten" nutzen.</p></div>
-      </Card>
-      <Card className="p-4"><Eyebrow>Aktivität eintragen</Eyebrow>
-        <div className="mt-3 grid grid-cols-2 gap-2.5">
-          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input col-span-2" />
-          <input placeholder="Was war das? (z. B. 800m-Test)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input col-span-2" />
-          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="tc-input col-span-2">{CUSTOM_CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-          <input inputMode="numeric" placeholder="Dauer (Min., optional)" value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: e.target.value })} className="tc-input font-num" />
-          <select value={form.rpe} onChange={(e) => setForm({ ...form, rpe: e.target.value })} className="tc-input" aria-label="Anstrengung (RPE)"><option value="">RPE (optional)</option>{[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} — {CUSTOM_RPE_LOAD[r]}⚡</option>)}</select>
-          <input placeholder="Notiz (optional, z. B. Ergebnis)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input col-span-2" />
-        </div>
-        <button onClick={add} className="mt-3 w-full rounded-xl text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5" style={{ background: MANUAL_SPORT.color }}><Plus size={16} /> Hinzufügen</button>
-      </Card>
+      {/* U11: Liste vor Formular */}
       {data.customLog.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {[["all", "Alle"], ...CUSTOM_CATEGORIES].map(([k, l]) => (
@@ -4429,6 +4462,23 @@ function CustomActivityProgress({ data, setData }) {
       ) : data.customLog.length > 0 ? (
         <div className="py-6 text-center text-xs text-slate-400">Keine Einträge in dieser Kategorie.</div>
       ) : null}
+      <Card className="p-4"><Eyebrow>Aktivität eintragen</Eyebrow>
+        <div className="mt-3 grid grid-cols-2 gap-2.5">
+          <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className="tc-input col-span-2" />
+          <input placeholder="Was war das? (z. B. 800m-Test)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input col-span-2" />
+          <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="tc-input col-span-2">{CUSTOM_CATEGORIES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+          <input inputMode="numeric" placeholder="Dauer (Min., optional)" value={form.durationMin} onChange={(e) => setForm({ ...form, durationMin: e.target.value })} className="tc-input font-num" />
+          <div>
+            <select value={form.rpe} onChange={(e) => setForm({ ...form, rpe: e.target.value })} className="tc-input w-full" aria-label="Anstrengung (RPE)"><option value="">RPE (optional)</option>{[1, 2, 3, 4, 5].map((r) => <option key={r} value={r}>{r} — {CUSTOM_RPE_LOAD[r]}⚡</option>)}</select>
+            {/* U11: Kurzerklärung direkt am Feld */}
+            <div className="text-[10px] text-slate-400 mt-1">Anstrengung: 1 locker – 5 maximal</div>
+          </div>
+          <input placeholder="Notiz (optional, z. B. Ergebnis)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input col-span-2" />
+        </div>
+        <button onClick={add} className="mt-3 w-full rounded-xl text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5" style={{ background: MANUAL_SPORT.color }}><Plus size={16} /> Hinzufügen</button>
+        {/* U18 Punkt 2: Abgrenzungssatz — Warnfunktion bleibt, jetzt leise Fußnote statt farbige Karte am Listenkopf */}
+        <div className="mt-3 text-[10px] text-slate-400 leading-relaxed">Für alles, was zu keinem Plan-Slot gehört — Reaktivierungs-Läufe, ein Kalibrierungs-Test, eine spontane Zusatzeinheit. Für normale Läufe nach Plan bitte weiter „Laufzeiten" nutzen.</div>
+      </Card>
       <UndoToast undo={undo} onUndo={doUndo} />
     </div>
   );
@@ -5036,7 +5086,10 @@ function NutritionProfileForm({ initial, onSave, submitLabel }) {
           {plan.belowFloor && <div className="text-[10.5px] text-amber-700 leading-relaxed">Ziel auf die Untergrenze {plan.floor} kcal angehoben — schneller abzunehmen würde Training & Gesundheit untergraben.</div>}
           {plan.calibrated && <button onClick={() => set("tdeeManual", null)} className="text-[10px] font-semibold text-slate-400 underline">Kalibrierung zurücksetzen (zurück zur Formel)</button>}
         </div>
-      ) : <div className="rounded-xl bg-slate-100 p-3 text-[11px] text-slate-500">Alter, Größe und Gewicht eintragen — dann erscheint hier dein berechnetes Tagesziel.</div>}
+      ) : (
+        /* U18 Punkt 4: Kcal-Profil-Tipptext — leise Fußnote statt grauer Kasten */
+        <div className="text-[10.5px] text-slate-400 leading-relaxed px-1">Alter, Größe und Gewicht eintragen — dann erscheint hier dein berechnetes Tagesziel.</div>
+      )}
       <button onClick={() => plan && onSave(f)} disabled={!plan} className="w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold disabled:opacity-40">{submitLabel}</button>
     </div>
   );
@@ -5073,6 +5126,10 @@ function NutritionTab({ data, setData, plan, initialKcalOpen, onKcalOpenConsumed
   // zurücksetzt. Deckt den Fall "Tab-Wechsel + Schnelleintrag" ab.
   const [showKcal, setShowKcal] = useState(!!initialKcalOpen);
   useEffect(() => { if (initialKcalOpen) onKcalOpenConsumed?.(); }, []);
+  // U18 Punkt 3: Kcal-Einstiegssatz zeigt sich nur für die ersten Besuche vor Setup-Abschluss, danach
+  // dauerhaft aus — Muster wie seenBadgeIds (einmal gezählt, nie zurückgesetzt), hier ein Zähler statt
+  // eines Sets, weil "gesehen" hier graduell statt binär ist.
+  useEffect(() => { if (!nut.setup) setData((d) => ({ ...d, seenIntroHints: { ...(d.seenIntroHints || {}), kcalSetup: (d.seenIntroHints?.kcalSetup || 0) + 1 } })); }, []);
   // v7.31-Kritiker-Fund (finale Diff-Prüfung): der Schnelleintrag-Button ist global (auch WÄHREND man
   // bereits auf dem Kcal-Tab ist) erreichbar — dort ändert sich der Screen nicht, `NutritionTab`
   // unmountet/mountet NICHT neu, der obige einmalige Mount-Effekt feuert also nicht erneut und der Tap
@@ -5103,7 +5160,7 @@ function NutritionTab({ data, setData, plan, initialKcalOpen, onKcalOpenConsumed
     <div className="space-y-4">
       <Card className="p-4">
         <Eyebrow color="#059669">Ernährung einrichten</Eyebrow>
-        <p className="text-xs text-slate-500 leading-relaxed mt-1.5">Nur Kalorien, kein Lebensmittel-Tracking: Du schätzt kcal pro Mahlzeit, die App rechnet Ziel, Training und Trend. <b>Konsistent grob schlägt selten genau</b> — Schätzwerte reichen völlig.</p>
+        {(data.seenIntroHints?.kcalSetup || 0) <= 3 && <p className="text-xs text-slate-500 leading-relaxed mt-1.5">Nur Kalorien, kein Lebensmittel-Tracking: Du schätzt kcal pro Mahlzeit, die App rechnet Ziel, Training und Trend. <b>Konsistent grob schlägt selten genau</b> — Schätzwerte reichen völlig.</p>}
       </Card>
       <Card className="p-4"><NutritionProfileForm initial={nut.profile} onSave={saveProfile} submitLabel="Plan berechnen & starten" /></Card>
     </div>
@@ -5539,11 +5596,17 @@ function SchoolTab({ data, setData }) {
   };
   const toggleErledigt = (id) => setData((d) => ({ ...d, schoolLog: d.schoolLog.map((s) => (s.id === id ? { ...s, erledigt: !s.erledigt } : s)) }));
   const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
+  const [revealedId, setRevealedId] = useState(null); // U12: Bearbeiten/Löschen per Tap-Reveal statt Dauer-Anzeige
+  // U12: das Formular steht jetzt unter der Liste — "Bearbeiten" scrollt dorthin, sonst wäre es nach dem
+  // Umsortieren unsichtbar, ohne dass der Nutzer weiß, wo er suchen soll.
+  const formRef = useRef(null);
+  useEffect(() => { if (editingId && formRef.current) formRef.current.scrollIntoView({ behavior: "smooth", block: "start" }); }, [editingId]);
   const remove = (id) => {
     const item = data.schoolLog.find((s) => s.id === id);
     setData((d) => ({ ...d, schoolLog: d.schoolLog.filter((s) => s.id !== id) }));
     if (item) triggerUndo(item.art === "klausur" ? "Klausur" : "Hausaufgabe", "schoolLog", item);
     if (editingId === id) cancelEdit();
+    if (revealedId === id) setRevealedId(null);
   };
   const [sortMode, setSortMode] = useState("faellig"); // v6.0: "faellig" (Was ist zuerst dran?) | "fach" (gruppiert)
   const sorted = [...data.schoolLog].sort((a, b) => (a.erledigt === b.erledigt ? a.faelligkeit.localeCompare(b.faelligkeit) : a.erledigt ? 1 : -1));
@@ -5551,37 +5614,22 @@ function SchoolTab({ data, setData }) {
   const doneItems = sorted.filter((s) => s.erledigt);
   const openCount = openItems.length;
   const overdueCount = openItems.filter((s) => daysUntil(s.faelligkeit) < 0).length;
+  // U12: "Heute fällig" + nächster Termin zuerst — aus openItems/schoolStatus abgeleitet, keine neue Berechnung.
+  const todayItems = openItems.filter((s) => daysUntil(s.faelligkeit) === 0);
+  const nextItem = openItems.find((s) => daysUntil(s.faelligkeit) > 0);
+  const headlineTone = overdueCount ? "warn" : todayItems.length ? "mid" : "rest";
+  const [headAccent, headBright] = RECO_COLORS[headlineTone];
+  const headCol = dark ? headBright : headAccent;
+  const headlineParts = [];
+  if (overdueCount) headlineParts.push(`${overdueCount} überfällig`);
+  if (todayItems.length) headlineParts.push(`Heute fällig: ${todayItems.map((i) => i.titel).join(", ")}`);
 
   return (
     <div className="space-y-4">
-      <Card className="p-4">
-        <Eyebrow>{editingId ? "Eintrag bearbeiten" : "Neu eintragen"}</Eyebrow>
-        <div className="mt-3 space-y-2.5">
-          <input placeholder="Was? (z. B. Mathe S. 42, Aufgabe 3)" value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="tc-input" />
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fach (optional)</div>
-              <input placeholder="z. B. Mathe" value={form.fach} onChange={(e) => setForm({ ...form, fach: e.target.value })} className="tc-input" />
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fällig bis</div>
-              <input type="date" value={form.faelligkeit} onChange={(e) => setForm({ ...form, faelligkeit: e.target.value })} className="tc-input font-num" />
-            </div>
-          </div>
-          <div className="flex gap-1.5">
-            {SCHOOL_ART.map(([v, l]) => (
-              <button key={v} onClick={() => setForm({ ...form, art: v })} className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-semibold border transition ${form.art === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <button onClick={save} className="flex-1 rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5">
-              {editingId ? <Check size={16} /> : <Plus size={16} />} {editingId ? "Speichern" : "Eintragen"}
-            </button>
-            {editingId && (
-              <button onClick={cancelEdit} className="rounded-xl border border-slate-200 text-slate-500 px-4 py-2.5 text-sm font-semibold">Abbrechen</button>
-            )}
-          </div>
-        </div>
+      <Card className="p-4" style={{ borderColor: headCol + "55", background: headCol + (dark ? "1a" : "10") }}>
+        <Eyebrow color={headCol}>Heute</Eyebrow>
+        <div className="text-sm font-semibold mt-1" style={{ color: headCol }}>{headlineParts.length ? headlineParts.join(" · ") : "Heute nichts fällig"}</div>
+        {nextItem && <div className="text-xs text-slate-500 mt-1">Nächster Termin: {nextItem.titel} · {schoolStatus(nextItem).label}</div>}
       </Card>
 
       <Card className="p-4">
@@ -5604,21 +5652,28 @@ function SchoolTab({ data, setData }) {
             const col = dark ? bright : accent;
             const base = item.id === editingId ? { borderColor: "#6366f1" } : item.erledigt ? { borderColor: dark ? "#26334a" : "#e2e8f0" } : { borderColor: col + "55", background: col + (dark ? "1a" : "10") };
             const klausurEdge = item.art === "klausur" && !item.erledigt && item.id !== editingId ? { borderLeft: `3px solid ${dark ? "#fb7185" : KLAUSUR_COLOR}` } : {};
+            const revealed = revealedId === item.id;
             return (
               <div key={item.id} className="rounded-xl border p-3 flex items-center gap-3" style={{ ...base, ...klausurEdge }}>
                 <button onClick={() => toggleErledigt(item.id)} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: item.erledigt ? "#059669" : (dark ? "#3b4a63" : "#cbd5e1"), background: item.erledigt ? "#059669" : "transparent" }}>
                   {item.erledigt && <Check size={14} color="#fff" strokeWidth={3} />}
                 </button>
-                <div className="min-w-0 flex-1">
+                <button onClick={() => setRevealedId(revealed ? null : item.id)} className="min-w-0 flex-1 text-left">
                   <div className={`text-sm font-semibold ${item.erledigt ? "line-through text-slate-400" : "text-slate-800"}`}>{item.titel}</div>
                   <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
                     {item.fach && sortMode !== "fach" && <span>{item.fach}</span>}
                     {item.art === "klausur" && <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-rose-100 text-rose-700"><GraduationCap size={10} /> Klausur</span>}
                     {!item.erledigt && <span className="font-semibold" style={{ color: col }}>{status.label}</span>}
                   </div>
-                </div>
-                <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
-                <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+                </button>
+                {revealed ? (
+                  <>
+                    <button onClick={() => startEdit(item)} className="shrink-0 p-1.5 text-slate-300"><Pencil size={15} /></button>
+                    <button onClick={() => remove(item.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+                  </>
+                ) : (
+                  <ChevronRight size={15} className="text-slate-300 shrink-0" />
+                )}
               </div>
             );
           };
@@ -5642,6 +5697,38 @@ function SchoolTab({ data, setData }) {
           );
         })()}
       </Card>
+
+      <div ref={formRef}>
+        <Card className="p-4">
+          <Eyebrow>{editingId ? "Eintrag bearbeiten" : "Neu eintragen"}</Eyebrow>
+          <div className="mt-3 space-y-2.5">
+            <input placeholder="Was? (z. B. Mathe S. 42, Aufgabe 3)" value={form.titel} onChange={(e) => setForm({ ...form, titel: e.target.value })} className="tc-input" />
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fach (optional)</div>
+                <input placeholder="z. B. Mathe" value={form.fach} onChange={(e) => setForm({ ...form, fach: e.target.value })} className="tc-input" />
+              </div>
+              <div>
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Fällig bis</div>
+                <input type="date" value={form.faelligkeit} onChange={(e) => setForm({ ...form, faelligkeit: e.target.value })} className="tc-input font-num" />
+              </div>
+            </div>
+            <div className="flex gap-1.5">
+              {SCHOOL_ART.map(([v, l]) => (
+                <button key={v} onClick={() => setForm({ ...form, art: v })} className={`flex-1 rounded-lg px-2 py-2 text-[11px] font-semibold border transition ${form.art === v ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>{l}</button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={save} className="flex-1 rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5">
+                {editingId ? <Check size={16} /> : <Plus size={16} />} {editingId ? "Speichern" : "Eintragen"}
+              </button>
+              {editingId && (
+                <button onClick={cancelEdit} className="rounded-xl border border-slate-200 text-slate-500 px-4 py-2.5 text-sm font-semibold">Abbrechen</button>
+              )}
+            </div>
+          </div>
+        </Card>
+      </div>
 
       <UndoToast undo={undo} onUndo={doUndo} />
     </div>
@@ -5908,7 +5995,7 @@ function CalendarTab({ data }) {
             const iso = toLocalISO(d), e = byDay[iso], isToday = iso === todayIso;
             const rows = [...(filter.training ? trainingRows(e, false) : []), ...(filter.schule ? schoolRows(e, false) : [])];
             return (
-              <Card key={iso} className="p-3.5" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
+              <Card key={iso} className={`p-3.5 ${isToday ? "tc-today-ring" : ""}`} style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className={`text-xs font-bold ${isToday ? "text-indigo-600" : "text-slate-700"}`}>{DAY_FULL[DAYS[(d.getDay() + 6) % 7]]}</span>
                   <span className="text-[11px] text-slate-400 font-num">{fmtDM(d)}</span>
@@ -6195,6 +6282,10 @@ export default function App() {
         .tc-dark .bg-violet-100{background-color:rgba(124,58,237,.28)!important;}
         .tc-dark .text-violet-700{color:#c4b5fd!important;}
         .tc-dark .text-rose-500{color:#fb7185!important;}
+        /* U13: Card setzt selbst border-slate-200/80 + shadow-sm; deren .tc-dark-!important-Regeln oben
+           würden eine reine Inline-style-Hervorhebung (borderColor/boxShadow) im Dark Mode sonst
+           überschreiben — eigene, spät im Block stehende Klasse gewinnt zuverlässig gegen beide. */
+        .tc-dark .tc-today-ring{border-color:#6366f1!important;box-shadow:0 0 0 1px #6366f1!important;}
       `}</style>
 
       <div className="tc-shell mx-auto">
@@ -6235,7 +6326,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.32` : "Fortschritt wird automatisch gespeichert · v7.32"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.33` : "Fortschritt wird automatisch gespeichert · v7.33"}</span>
           </footer>
         </main>
       </div>
