@@ -534,6 +534,8 @@ function parseTimeToSec(str) { if (!str && str !== 0) return null; const s = Str
 const secToMMSS = (sec) => { if (sec == null || isNaN(sec)) return "—"; const t = Math.round(sec); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtISOshort = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+// U1: Bereitschafts-/Ampel-Aussage nennt ihr Stand-Datum im selben Satz statt in einem separaten Chip.
+const asOfSuffix = (iso) => (iso ? ` (Stand ${fmtISOshort(iso)})` : "");
 // v7.0: Gesamt-Trainingszeit lesbar machen — unter 1 h in Minuten, sonst h:mm
 // v7.0: Dezimalstunden statt h:mm — gleiche Formatlogik wie die Distanz-Kachel daneben (1 Nachkommastelle)
 const fmtHours = (sec) => Math.round(((sec || 0) / 3600) * 10) / 10;
@@ -1449,19 +1451,23 @@ function UndoToast({ undo, onUndo }) {
 }
 
 /* ==== Abhakbare Session-Zeile: ganze Fläche tippbar, klares Erledigt-Feedback ==== */
-function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
+function SessionRow({ item, done, onToggle, onExpand, isOpen, extra, labelDone, overdue }) {
   const dark = useDark();
   const s = SPORT[item.sport];
   const checkable = item.load > 0 && typeof onToggle === "function";
+  // U5: vorbei & nicht erledigt sichtbar von "kommt noch" unterscheiden — nur eine zusätzliche optische
+  // Einordnung des bestehenden "offen"-Zustands, die anderen drei Zustände (erledigt/entschuldigt/
+  // ausgefallen) sind an ihren eigenen Bedingungen unten unverändert erkennbar.
+  const missedOpen = overdue && checkable && !done && !item.cancelled && !item.movedAway && !item.excused && !item.replaced;
   if (item.tournament) return (
     <button onClick={checkable ? onToggle : undefined} className="w-full text-left rounded-xl border shadow-sm p-3.5 flex items-center gap-3 transition active:scale-[0.99]" style={{ background: done ? (dark ? "#7c2d12" : "#fde68a") : softBg(dark, s.color, s.tint), borderColor: "#fbbf24" }}>
       <div className="h-9 w-9 rounded-xl bg-amber-400 flex items-center justify-center shrink-0"><Trophy size={18} color="#7c2d12" /></div>
       <div className="min-w-0 flex-1"><div className={`font-display font-semibold text-amber-900 ${done ? "line-through" : ""}`}>{item.label}</div><div className="text-xs text-amber-800/80">{item.desc}</div></div>
-      {checkable && <CheckBadge done={done} color="#b45309" />}
+      {checkable && <CheckBadge done={done} color="#b45309" label={labelDone} />}
     </button>
   );
   return (
-    <div className={`rounded-xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+    <div className={`rounded-xl bg-white border shadow-sm transition ${done || missedOpen ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : missedOpen ? { borderColor: "#f59e0b99", background: softBg(dark, "#f59e0b", "#fffbeb") } : {}}>
       {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
           sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
       <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway || item.excused || item.replaced ? { opacity: 0.6 } : {}}>
@@ -1470,6 +1476,7 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway || item.excused || item.replaced ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              {missedOpen && <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1.5 py-0.5">Verpasst</span>}
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
               {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
               {item.movedAway && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Verschoben → {DAY_FULL[item.movedTo]}</span>}
@@ -1486,7 +1493,7 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
-        {checkable && <CheckBadge done={done} color={s.color} onClick={onToggle} />}
+        {checkable && <CheckBadge done={done} color={s.color} onClick={onToggle} label={labelDone} />}
         {onExpand && <button onClick={onExpand} className="shrink-0 p-1 -mr-1 text-slate-400"><ChevronDown size={16} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
       </div>
       {onExpand && isOpen && (
@@ -1498,8 +1505,17 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     </div>
   );
 }
-function CheckBadge({ done, color, onClick }) {
+function CheckBadge({ done, color, onClick, label }) {
   const dark = useDark();
+  // U4: auf Start trägt das Abhak-Element eine Beschriftung ("Erledigt") statt eines reinen Symbols —
+  // andere Listen (z. B. Woche) bleiben aus Platzgründen beim kompakten Icon-only-Kästchen.
+  if (label) {
+    return (
+      <button onClick={onClick} className="h-8 rounded-lg border-2 px-2.5 flex items-center gap-1 shrink-0 text-[11px] font-semibold transition" style={{ borderColor: done ? color : (dark ? "#3b4a63" : "#cbd5e1"), background: done ? color : "transparent", color: done ? "#fff" : (dark ? "#94a3b8" : "#64748b") }}>
+        {done && <Check size={13} strokeWidth={3} />} Erledigt
+      </button>
+    );
+  }
   return (
     <button onClick={onClick} className="h-8 w-8 rounded-lg border-2 flex items-center justify-center shrink-0 transition" style={{ borderColor: done ? color : (dark ? "#3b4a63" : "#cbd5e1"), background: done ? color : "transparent" }}>
       {done && <Check size={16} color="#fff" strokeWidth={3} />}
@@ -1508,29 +1524,6 @@ function CheckBadge({ done, color, onClick }) {
 }
 
 /* ===================== COCKPIT ===================== */
-/* Kompakter Schule-Glance: nur sichtbar, wenn etwas offen ist — verlinkt in den vollen Schule-Tab */
-function SchoolGlanceCard({ data, goSchule }) {
-  const dark = useDark();
-  const open = data.schoolLog.filter((s) => !s.erledigt);
-  if (!open.length) return null;
-  const overdue = open.filter((s) => daysUntil(s.faelligkeit) < 0);
-  const next = [...open].sort((a, b) => a.faelligkeit.localeCompare(b.faelligkeit))[0];
-  const tone = overdue.length ? "warn" : daysUntil(next.faelligkeit) <= 1 ? "mid" : "rest";
-  const [accent, bright] = RECO_COLORS[tone];
-  const col = dark ? bright : accent;
-  return (
-    <button onClick={goSchule} className="w-full text-left">
-      <Card className="p-4" style={{ background: col + (dark ? "1a" : "10"), borderColor: col + "44" }}>
-        <div className="flex items-center justify-between mb-1.5">
-          <Eyebrow color={col}>Schule</Eyebrow>
-          <ChevronRight size={15} style={{ color: col }} />
-        </div>
-        <div className="text-sm font-semibold text-slate-800">{open.length} offen{(() => { const k = open.filter((s) => s.art === "klausur").length; return k ? ` · ${k} Klausur${k === 1 ? "" : "en"}` : ""; })()}{overdue.length ? ` · ${overdue.length} überfällig` : ""}</div>
-        <div className="text-xs text-slate-500 mt-0.5 truncate flex items-center gap-1">{next.art === "klausur" && <GraduationCap size={12} className="shrink-0 text-rose-500" />}<span className="truncate">{next.titel}{next.fach ? ` · ${next.fach}` : ""} · {schoolStatus(next).label}</span></div>
-      </Card>
-    </button>
-  );
-}
 /* v5.0: Erklärt während/nach einer Krankheit, was die App automatisch angepasst hat */
 function IllnessNoticeCard({ data }) {
   const dark = useDark();
@@ -2006,49 +1999,37 @@ function BadgePopup({ badges, data, setData, dark }) {
     </div>
   );
 }
-function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badges, streak, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
+function CockpitTab({ data, setData, currentWeek, plan, streak, goWeek, goRecovery, goRueckblick }) {
   const dark = useDark();
   const today = new Date();
-  // v7.29 (M5): 42 Tage Ist-Last-Historie einmal berechnen — deckt sowohl das 28-Tage-Fenster für
-  // loadTrendStatus als auch die 6 Wochenpunkte des Trend-Charts ab, ohne doppelt zu rechnen.
+  // v7.29 (M5): 42 Tage Ist-Last-Historie — U3 (Lücken-Erkennung) braucht davon nur noch das Fenster,
+  // die Trend-Auswertung selbst (loadTrendStatus) lebt seit U8 nur noch in RecoveryTab (LoadTrendCard).
   const loadHistory42 = useMemo(
     () => buildLoadHistory(toLocalISO(today), 42, { done: data.done, customLog: data.customLog, overrides: data.overrides, runLog: data.runLog, vbSlots: data.vbSlots, illnessLog: data.illnessLog, planEndMode: data.planEndMode }),
     [data.done, data.customLog, data.overrides, data.runLog, data.vbSlots, data.illnessLog, data.planEndMode]
   );
-  const loadTrend = useMemo(() => loadTrendStatus(loadHistory42), [loadHistory42]);
   const todayKey = DAYS[(today.getDay() + 6) % 7];
   const todayPlan = plan.find((d) => d.day === todayKey);
   const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
   const inPlan = today >= PLAN_START && currentWeek <= totalW;
-  // v7.9: "Woche X/Y" in den Hero-Karten zeigt jetzt die um Krankheit bereinigte effektive Trainingswoche
-  // (von TOTAL_WEEKS, dem echten Curriculum) statt der rohen Kalenderwoche (von totalW, dem ggf. durch
-  // Krankheit verlängerten Kalender) — sonst laufen diese Zahl und die "Woche X" bei den Zielpace-Werten
-  // im Fortschritt-Tab (die schon effectiveWeek nutzten) auseinander, sobald man über den krankheitsnahen
-  // Zeitraum hinaus ist. Bug gefunden, weil genau das im Fortschritt-Tab an anderer Stelle bereits als
-  // Label/Werte-Widerspruch existierte (Label zeigte currentWeek, Werte darunter schon effectiveWeek).
-  const effWNow = effectiveWeek(currentWeek, data.illnessLog);
   const recents = [...data.recoveryLog].sort((a, b) => b.date.localeCompare(a.date));
   const latest = recents[0];
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const weekLoad = plan.reduce((s, d) => s + d.load, 0);
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
-  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides) : null;
   const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
   // v5.0: Krank-Tage zählen nicht in den Nenner — abgehakte (doch trainierte) Einheiten aber schon
   const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && (it.illness !== "sick" || data.done[it.uid])).length, 0);
-  const testDay = testDateFor(data.illnessLog, data.planEndMode);
-  const daysToTest = Math.ceil((testDay - atMidnight(today)) / DAY_MS);
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
-  const [showReview, setShowReview] = useState(false); // v7.5: Rückblick-Bereich (Ziel/Stats/Fortschritt/Abzeichen) standardmäßig eingeklappt
-  // v7.17: streak/badges kommen jetzt als Props vom App-Root (siehe dortiger Kommentar) statt hier berechnet zu werden
   // v6.2: Laufplan-Fortschritt statt totem externen Link — Gesamtzahl live berechnet (58 nur im Basisfall,
   // siehe runPlanProgress), damit sie bei Krankheit + planEndMode "fixed" korrekt sinkt statt zu lügen.
+  // U16: nur noch für die Kennzahl in der Rückblick-Teaser-Zeile gebraucht, der Rest der Karte lebt jetzt
+  // im eigenen Mehr-Bildschirm (RueckblickTab), der dieselben Werte für seine volle Ansicht neu berechnet.
   const runProgress = useMemo(() => runPlanProgress(data.illnessLog, data.planEndMode), [data.illnessLog, data.planEndMode]);
   const runDone = runProgress.uids.filter((uid) => data.done[uid]).length;
   const runPct = runProgress.total ? Math.round((runDone / runProgress.total) * 100) : 0;
-  const runMotivation = runPct >= 100 ? "Plan komplett! 🎉" : runPct >= 50 ? "Über die Hälfte geschafft — starke Leistung" : runPct >= 10 ? "Guter Rhythmus, weiter so" : "Los geht's!";
   const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
   const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
   const recoText = dark ? recoBright : recoAccent;
@@ -2065,54 +2046,62 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
     }
     return null;
   }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides]);
-  const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
-  const movePrio = (i, dir) => {
-    const next = [...prios]; const j = i + dir;
-    if (j < 0 || j >= next.length) return;
-    [next[i], next[j]] = [next[j], next[i]];
-    setData((d) => ({ ...d, prios: next }));
-  };
+  // U3: Statuszeile "wo stehe ich" — beide Bausteine aus ohnehin vorhandenen Daten abgeleitet, keine neue Berechnung.
+  // Mehrtägige Lücke: aus derselben 42-Tage-Ist-Last-Historie wie LoadTrendCard, kranke/vor-Plan-Tage brechen die Lücke nicht.
+  const gapInfo = useMemo(() => {
+    let streak = 0;
+    for (let i = loadHistory42.length - 1; i >= 0; i--) {
+      const d = loadHistory42[i];
+      if (d.load > 0 || d.sick || d.beforePlan) break;
+      streak++;
+    }
+    if (streak < 2) return null;
+    const lastActiveIdx = loadHistory42.length - 1 - streak;
+    return lastActiveIdx >= 0 ? { sinceDate: loadHistory42[lastActiveIdx].date } : null;
+  }, [loadHistory42]);
+  // Rückstand: vergangene (nicht heutige/künftige) Tage dieser Woche mit noch offenen, echten Einheiten
+  // (OF5: Ruhetage haben load 0 und fallen damit automatisch raus, wie bei totalThisWeek/doneThisWeek oben).
+  const statusBacklog = useMemo(() => {
+    if (!inPlan) return 0;
+    const monday = mondayOfWeek(currentWeek);
+    let openCount = 0;
+    plan.forEach((d) => {
+      const date = new Date(monday.getTime() + DAYS.indexOf(d.day) * DAY_MS);
+      if (atMidnight(date) >= atMidnight(today)) return;
+      d.items.forEach((it) => { if (it.load > 0 && !data.done[it.uid] && !it.cancelled && !it.excused && !it.movedAway && !it.replaced) openCount++; });
+    });
+    return openCount;
+  }, [plan, currentWeek, data.done, inPlan]);
 
   return (
     <div className="space-y-4">
-      <Card className="p-4">
-        <div className="flex items-center justify-between mb-2"><Eyebrow>Bereitschaft heute</Eyebrow><button onClick={goRecovery} className="text-[11px] font-semibold text-emerald-700 inline-flex items-center gap-0.5">Check-in <ChevronRight size={13} /></button></div>
-        <div className="flex items-center gap-3">
-          <div className="h-11 w-11 rounded-full flex items-center justify-center shrink-0" style={{ background: dark ? status.color + "26" : status.tint }}><Heart size={20} color={dark ? status.bright : status.color} /></div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap"><span className="font-display font-semibold" style={{ color: dark ? status.bright : status.color }}>{status.label}</span>{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
-            <div className="text-xs text-slate-500 leading-snug">{status.hint}</div>
-          </div>
-        </div>
-        {latest ? (
-          <div className="mt-3 flex gap-2 text-[11px] flex-wrap">
-            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">{latest.sleep}h Schlaf</span>
-            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">Form {latest.readiness}/5</span>
-            {latest.napMin ? <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">😴 {latest.napMin} Min</span> : null}
-            <span className="rounded-lg bg-slate-100 px-2 py-1 text-slate-500">{fmtISOshort(latest.date)}</span>
-          </div>
-        ) : <div className="mt-3 text-[11px] text-slate-400">Noch kein Check-in — tippe oben rechts, um Schlaf & Form einzutragen.</div>}
-      </Card>
-
-      {/* v5.0: Krankheits-Status — was die App gerade automatisch anders macht */}
-      <IllnessNoticeCard data={data} />
-
-      {/* 2.0: Konkrete Tagesempfehlung aus Ampel + Muskelkater + Tagesplan */}
+      {/* U3: feste Statuszeile "wo stehe ich" — Normalfall Wochenstand, bei mehrtägiger Lücke stattdessen
+          die Lückenaussage; Warnfarbe bei erkennbarem Rückstand (OF1), Tap führt zum Woche-Bildschirm. */}
       {inPlan && (
-        <Card className="p-4" style={{ background: recoAccent + (dark ? "21" : "12"), borderColor: recoAccent + (dark ? "59" : "44") }}>
-          <div className="flex items-start gap-2.5">
-            <Target size={16} style={{ color: recoText }} className="mt-0.5 shrink-0" />
+        <button onClick={goWeek} className="w-full text-left">
+          <Card className="p-3.5 flex items-center justify-between gap-3" style={(gapInfo || statusBacklog > 0) ? panel(dark, "#d97706", "#fff7ed", "#fbbf24") : {}}>
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: recoText }}>Heutige Empfehlung</div>
-              <p className="text-xs leading-relaxed mt-1" style={{ color: recoText }}>{reco.text}</p>
+              <div className={`text-sm font-semibold ${(gapInfo || statusBacklog > 0) ? "" : "text-slate-800"}`} style={(gapInfo || statusBacklog > 0) ? { color: dark ? "#fbbf24" : "#b45309" } : undefined}>
+                {gapInfo ? `Seit ${fmtISOshort(gapInfo.sinceDate)} nichts eingetragen` : `Woche ${currentWeek} · ${doneThisWeek} von ${totalThisWeek} Einheiten erledigt`}
+              </div>
+              {gapInfo && <div className="text-[11px] mt-0.5" style={{ color: dark ? "#fde68a" : "#92400e" }}>{Math.max(totalThisWeek - doneThisWeek, 0)} Einheiten offen</div>}
             </div>
-          </div>
-        </Card>
+            <ChevronRight size={16} className="shrink-0" style={{ color: (gapInfo || statusBacklog > 0) ? (dark ? "#fbbf24" : "#d97706") : "#cbd5e1" }} />
+          </Card>
+        </button>
       )}
 
-      {/* v7.5: Heute-Plan (Abhak-Liste) nach oben geholt — war vorher hinter Kcal/Schule, dabei der Hauptgrund fürs Öffnen direkt nach dem Sport */}
+      {/* U8: Tageskarte-Gruppe (Block 3) — Krankheits-Hinweis (bedingt) + Empfehlungssatz (jetzt ohne eigene
+          Karte, spart eine ganze Card-Höhe) direkt über der Abhak-Liste, statt als separater Block. */}
+      <IllnessNoticeCard data={data} />
       <div>
         <div className="flex items-center justify-between"><Eyebrow>{inPlan ? `Heute · ${DAY_FULL[todayKey]}` : "Plan-Status"}</Eyebrow>{inPlan && <span className="text-[10px] text-slate-400">Tippen = abhaken</span>}</div>
+        {inPlan && reco.text && (
+          <div className="mt-1.5 flex items-start gap-1.5">
+            <Target size={13} style={{ color: recoText }} className="mt-0.5 shrink-0" />
+            <p className="text-xs leading-relaxed" style={{ color: recoText }}>{reco.text}</p>
+          </div>
+        )}
         <div className="mt-2 space-y-2">
           {inPlan && todayPlan
             ? todayPlan.items.map((it) => (
@@ -2120,6 +2109,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
                   onExpand={it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
                   extra={it.sport === "run" && !it.replacement && !it.movedAway && !it.excused ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
+                  labelDone
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -2135,160 +2125,137 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, badge
         </div>
       </div>
 
-      {/* V3: Kcal-Schnellblick */}
-      {data.nutrition?.setup && (() => {
-        const kp = kcalPlan(data.nutrition.profile);
-        if (!kp) return null;
-        const tIso = todayISO();
-        const es = data.nutrition.intake.filter((e) => e.date === tIso);
-        const inn = es.filter((e) => e.kind !== "out").reduce((s, e) => s + e.kcal, 0);
-        const out = es.filter((e) => e.kind === "out").reduce((s, e) => s + e.kcal, 0) + garminKcalOn(data.runLog, tIso);
-        const tgt = Math.round(kp.target + (parseNum(data.nutrition.profile.addBack) / 100) * out);
-        const p = tgt ? Math.min(1, inn / tgt) : 0;
-        return (
-          <button onClick={goKcal} className="w-full text-left">
-            <Card className="p-3.5 flex items-center gap-3">
-              <div className="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center shrink-0"><Utensils size={16} className="text-emerald-600" /></div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline justify-between"><span className="text-xs font-semibold text-slate-700">Kcal heute</span><span className="font-num text-[11px] text-slate-500">{inn} / {tgt}</span></div>
-                <div className="mt-1 h-1.5 rounded-full overflow-hidden bg-slate-100"><div className="h-full rounded-full" style={{ width: `${Math.round(p * 100)}%`, background: inn > tgt * 1.07 ? "#d97706" : "#059669" }} /></div>
-              </div>
-              <ChevronRight size={15} className="text-slate-300 shrink-0" />
-            </Card>
-          </button>
-        );
-      })()}
-
-      <SchoolGlanceCard data={data} goSchule={goSchule} />
-
-      <div className="tc-tablet-2col">
+      {/* U8: Bereitschaftszeile (Block 4) — jetzt nach der Tageskarte statt davor. */}
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-1.5"><Eyebrow>Wochenrhythmus</Eyebrow><button onClick={goWeek} className="text-[11px] font-semibold text-indigo-700 inline-flex items-center gap-0.5">Wochenplan <ChevronRight size={13} /></button></div>
-        {/* v6.2 Motivations-Audit: Wochenlast war reiner kleiner grauer Fließtext — jetzt eine echte Zahl mit Trend */}
-        <div className="flex items-baseline gap-2 mb-1.5 flex-wrap">
-          <span className="font-num text-2xl font-bold leading-none text-slate-800">⚡{weekLoad}</span>
-          <span className="text-xs text-slate-400">diese Woche</span>
-          {prevWeekLoad != null && (
-            <span className={`ml-auto text-xs font-bold font-num ${weekLoad > prevWeekLoad * 1.1 ? "text-amber-600" : weekLoad < prevWeekLoad * 0.9 ? "text-slate-400" : "text-emerald-600"}`}>
-              {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} letzte Woche
-            </span>
-          )}
+        <div className="flex items-center justify-between mb-2"><Eyebrow>Bereitschaft heute</Eyebrow><button onClick={goRecovery} className="text-[11px] font-semibold text-emerald-700 bg-emerald-100 rounded-full pl-2.5 pr-2 py-1 inline-flex items-center gap-0.5 active:scale-95 transition">Check-in <ChevronRight size={13} /></button></div>
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-full flex items-center justify-center shrink-0" style={{ background: dark ? status.color + "26" : status.tint }}><Heart size={20} color={dark ? status.bright : status.color} /></div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap"><span className="font-display font-semibold" style={{ color: dark ? status.bright : status.color }}>{status.label}{asOfSuffix(latest?.date)}</span>{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
+            <div className="text-xs text-slate-500 leading-snug">{status.hint}</div>
+          </div>
         </div>
-        <WeekRhythm plan={plan} week={currentWeek} highlightToday customLog={data.customLog} overrides={data.overrides} runLog={data.runLog} />
-        <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
-          {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: MANUAL_SPORT.color }} /> {MANUAL_SPORT.label}</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-slate-400" /> Ausgefallen</span>
-          {/* v7.17: eigene Entschuldigen-Kategorie, farblich von "Ausgefallen" unterschieden */}
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#e11d48" }} /> Krank (Einheit)</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#d97706" }} /> Nicht bereit</span>
-        </div>
-        <div className="mt-2"><LoadHelp /></div>
+        {latest ? (
+          <div className="mt-3 flex gap-2 text-[11px] flex-wrap">
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">{latest.sleep}h Schlaf</span>
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">Form {latest.readiness}/5</span>
+            {latest.napMin ? <span className="rounded-lg bg-slate-100 px-2 py-1 font-num text-slate-700">😴 {latest.napMin} Min</span> : null}
+          </div>
+        ) : <div className="mt-3 text-[11px] text-slate-400">Noch kein Check-in — tippe oben rechts, um Schlaf & Form einzutragen.</div>}
       </Card>
 
-      <LoadTrendCard history42={loadHistory42} status={loadTrend} />
+      {/* U16: der komplette bisherige Aufklapp-Inhalt (Ziel-Countdown, Stats, Laufplan-Fortschritt,
+          Gesamtstatistik/Abzeichen) lebt jetzt als eigener Bildschirm unter "Mehr" (RueckblickTab) —
+          hier bleibt nur noch ein benannter Einstieg mit derselben Kennzahl, die vorher im eingeklappten
+          Kopf stand, damit die Zeile weiterhin auf den ersten Blick etwas aussagt. */}
+      <button onClick={goRueckblick} className="w-full text-left">
+        <Card className="p-4 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Eyebrow>Rückblick & Fortschritt</Eyebrow>
+            <div className="mt-1 font-num text-xs text-slate-500">🔥{streak} Wo. · {runPct}% Laufplan</div>
+          </div>
+          <ChevronRight size={16} className="text-slate-300 shrink-0" />
+        </Card>
+      </button>
+    </div>
+  );
+}
 
-      {/* Prioritäten */}
-      <Card className="p-4">
-        <Eyebrow>Prioritäten</Eyebrow>
-        <div className="text-[11px] text-slate-400 mt-1 mb-2">Steuert, was bei Zeitmangel oder roter Ampel zuerst gestrichen wird — von unten nach oben.</div>
-        <div className="divide-y divide-slate-100">
-          {prios.map((p, i) => (
-            <div key={p} className="flex items-center gap-2.5 py-2">
-              <span className="font-num text-xs font-bold text-slate-300 w-4">{i + 1}</span>
-              <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: softBg(dark, SPORT[p].color, SPORT[p].tint) }}><SportGlyph sport={p} size={15} /></div>
-              <span className="text-sm font-semibold text-slate-700 flex-1">{SPORT[p].label}</span>
-              {i === prios.length - 1 && <span className="text-[10px] text-slate-400 mr-1">wird zuerst gestrichen</span>}
-              <button onClick={() => movePrio(i, -1)} disabled={i === 0} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowUp size={14} /></button>
-              <button onClick={() => movePrio(i, 1)} disabled={i === prios.length - 1} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowDown size={14} /></button>
+/* ===================== U16: RÜCKBLICK & FORTSCHRITT (eigener Bildschirm unter "Mehr") =====================
+   Kompletter Inhalt des früheren CockpitTab-Aufklapp-Bereichs (v7.5–v7.31), 1:1 übernommen — reine
+   Verschiebung, keine Funktions-/Berechnungsänderung. Werte, die vorher aus CockpitTab-lokalem State
+   kamen, werden hier aus denselben Props (data/currentWeek/plan) neu abgeleitet, exakt wie readinessStatus
+   bereits zwischen CockpitTab und RecoveryTab unabhängig zweimal berechnet wird. */
+function RueckblickTab({ data, currentWeek, plan, badges, streak, daysToT, phaseNow, tournamentPassed, onClose }) {
+  const dark = useDark();
+  const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
+  const effWNow = effectiveWeek(currentWeek, data.illnessLog);
+  const testDay = testDateFor(data.illnessLog, data.planEndMode);
+  const daysToTest = Math.ceil((testDay - atMidnight(new Date())) / DAY_MS);
+  const recents = [...data.recoveryLog].sort((a, b) => b.date.localeCompare(a.date));
+  const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
+  const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
+  const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && (it.illness !== "sick" || data.done[it.uid])).length, 0);
+  const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
+  const runProgress = useMemo(() => runPlanProgress(data.illnessLog, data.planEndMode), [data.illnessLog, data.planEndMode]);
+  const runDone = runProgress.uids.filter((uid) => data.done[uid]).length;
+  const runPct = runProgress.total ? Math.round((runDone / runProgress.total) * 100) : 0;
+  const runMotivation = runPct >= 100 ? "Plan komplett! 🎉" : runPct >= 50 ? "Über die Hälfte geschafft — starke Leistung" : runPct >= 10 ? "Guter Rhythmus, weiter so" : "Los geht's!";
+  return (
+    <div className="space-y-4">
+      <Card className="p-3 flex items-center gap-3">
+        <button onClick={onClose} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600"><ChevronLeft size={18} /></button>
+        <div>
+          <div className="font-display font-bold text-slate-900">Rückblick & Fortschritt</div>
+          <div className="text-[11px] text-slate-500">Ziel · Statistik · Auszeichnungen</div>
+        </div>
+      </Card>
+
+      {/* Ziel-Karte: Turnier nur solange es ansteht, danach 5-km-Test */}
+      {!tournamentPassed ? (
+        <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4338ca 100%)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Eyebrow color="#c7d2fe">Nächstes Ziel</Eyebrow>
+              <div className="font-display text-white text-lg font-semibold mt-0.5">Schulturnier</div>
+              <div className="text-indigo-200 text-xs mt-0.5">Mi 15.07. · Volleyball</div>
             </div>
-          ))}
-        </div>
-      </Card>
+            <div className="text-right">
+              <div className="font-num text-4xl font-bold text-white leading-none">{daysToT > 0 ? daysToT : "0"}</div>
+              <div className="text-indigo-200 text-[11px] uppercase tracking-wider mt-1">{daysToT > 0 ? "Tage" : "heute!"}</div>
+            </div>
+          </div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
+            <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#064e3b 0%,#047857 55%,#059669 100%)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Eyebrow color="#a7f3d0">Nächstes Ziel</Eyebrow>
+              <div className="font-display text-white text-lg font-semibold mt-0.5">5-km-Testlauf</div>
+              <div className="text-emerald-100 text-xs mt-0.5">Mi {fmtDM(testDay)} · Woche {totalW} · Bestzeit</div>
+            </div>
+            <div className="text-right">
+              <div className="font-num text-4xl font-bold text-white leading-none">{daysToTest > 0 ? daysToTest : "—"}</div>
+              <div className="text-emerald-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
+            </div>
+          </div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
+          <div className="mt-3">
+            <div className="flex justify-between text-[10px] text-emerald-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
+            <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex gap-2.5">
+        <Stat label="Erledigt (Wo.)" value={totalThisWeek ? `${doneThisWeek}/${totalThisWeek}` : "krank"} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
+        <Stat label="Streak" value={streak} unit="Wo." accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
+        <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#047857" icon={<Moon size={13} className="text-emerald-600" />} />
       </div>
 
-      {/* v7.5: Rückblick & Fortschritt — Ziel-Countdown, Stats, Laufplan-Fortschritt, Gesamtstatistik/Abzeichen waren vorher immer offen sichtbar
-          (halbe Seitenlänge, an keinem der Haupt-Öffnungsgründe die primäre Aktion). Jetzt gebündelt und standardmäßig eingeklappt,
-          mit einer kleinen Kennzahl in der Kopfzeile, damit auch zu nicht komplett "verschwindet". */}
-      <Card className="p-0 overflow-hidden">
-        <button onClick={() => setShowReview((v) => !v)} className="w-full flex items-center justify-between p-4 text-left">
-          <Eyebrow>Rückblick & Fortschritt</Eyebrow>
-          <div className="flex items-center gap-2 shrink-0">
-            {!showReview && <span className="font-num text-xs text-slate-500">🔥{streak} Wo. · {runPct}% Laufplan</span>}
-            <ChevronDown size={16} className={`text-slate-400 transition-transform ${showReview ? "rotate-180" : ""}`} />
-          </div>
-        </button>
-        {showReview && (
-          <div className="px-4 pb-4 pt-1 space-y-4">
-            {/* Ziel-Karte: Turnier nur solange es ansteht, danach 5-km-Test */}
-            {!tournamentPassed ? (
-              <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#1e1b4b 0%,#312e81 55%,#4338ca 100%)" }}>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <Eyebrow color="#c7d2fe">Nächstes Ziel</Eyebrow>
-                    <div className="font-display text-white text-lg font-semibold mt-0.5">Schulturnier</div>
-                    <div className="text-indigo-200 text-xs mt-0.5">Mi 15.07. · Volleyball</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-num text-4xl font-bold text-white leading-none">{daysToT > 0 ? daysToT : "0"}</div>
-                    <div className="text-indigo-200 text-[11px] uppercase tracking-wider mt-1">{daysToT > 0 ? "Tage" : "heute!"}</div>
-                  </div>
-                </div>
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
-                <div className="mt-3">
-                  <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
-                  <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
-                </div>
-              </Card>
-            ) : (
-              <Card className="p-4 relative overflow-hidden" style={{ background: "linear-gradient(135deg,#064e3b 0%,#047857 55%,#059669 100%)" }}>
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <Eyebrow color="#a7f3d0">Nächstes Ziel</Eyebrow>
-                    <div className="font-display text-white text-lg font-semibold mt-0.5">5-km-Testlauf</div>
-                    <div className="text-emerald-100 text-xs mt-0.5">Mi {fmtDM(testDay)} · Woche {totalW} · Bestzeit</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-num text-4xl font-bold text-white leading-none">{daysToTest > 0 ? daysToTest : "—"}</div>
-                    <div className="text-emerald-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
-                  </div>
-                </div>
-                <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {effWNow}/{TOTAL_WEEKS}</div>
-                <div className="mt-3">
-                  <div className="flex justify-between text-[10px] text-emerald-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
-                  <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
-                </div>
-              </Card>
-            )}
-
-            <div className="flex gap-2.5">
-              <Stat label="Erledigt (Wo.)" value={totalThisWeek ? `${doneThisWeek}/${totalThisWeek}` : "krank"} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
-              <Stat label="Streak" value={streak} unit="Wo." accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
-              <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#047857" icon={<Moon size={13} className="text-emerald-600" />} />
-            </div>
-
-            <Card className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <Eyebrow color="#4338ca">Laufplan-Fortschritt</Eyebrow>
-                <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0"><Footprints size={15} className="text-indigo-600" /></div>
-              </div>
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="font-num text-3xl font-bold text-indigo-900">{runDone}</span>
-                <span className="text-sm text-slate-500">von {runProgress.total} Laufeinheiten · {runPct}%</span>
-              </div>
-              <div className="mt-2.5 h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.min(100, runPct)}%` }} /></div>
-              <div className="mt-2 text-xs font-bold text-indigo-600">{runMotivation}</div>
-            </Card>
-
-            {/* v7.0: Gesamtstatistik + Auszeichnungen (Garmin-/Gym-App-inspiriert, aber nur echte Werte) */}
-            <div className="tc-tablet-2col">
-              <GesamtstatistikCard data={data} dark={dark} />
-              <BadgesCard badges={badges} liveStreak={streak} hiddenIds={data.hiddenBadgeIds || []} dark={dark} />
-            </div>
-          </div>
-        )}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow color="#4338ca">Laufplan-Fortschritt</Eyebrow>
+          <div className="h-8 w-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0"><Footprints size={15} className="text-indigo-600" /></div>
+        </div>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="font-num text-3xl font-bold text-indigo-900">{runDone}</span>
+          <span className="text-sm text-slate-500">von {runProgress.total} Laufeinheiten · {runPct}%</span>
+        </div>
+        <div className="mt-2.5 h-2.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.min(100, runPct)}%` }} /></div>
+        <div className="mt-2 text-xs font-bold text-indigo-600">{runMotivation}</div>
       </Card>
+
+      {/* v7.0: Gesamtstatistik + Auszeichnungen (Garmin-/Gym-App-inspiriert, aber nur echte Werte) */}
+      <div className="tc-tablet-2col">
+        <GesamtstatistikCard data={data} dark={dark} />
+        <BadgesCard badges={badges} liveStreak={streak} hiddenIds={data.hiddenBadgeIds || []} dark={dark} />
+      </div>
     </div>
   );
 }
@@ -2596,6 +2563,10 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   );
   const confirmMismatch = (m) => setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [m.slotUid]: { status: "ersetzt", runLogId: m.runId } } }));
   const dismissMismatch = (m) => setData((d) => ({ ...d, dismissedRunMismatches: [...(d.dismissedRunMismatches || []), `${m.slotUid}|${m.runId}|${m.plannedType}`] }));
+  // U8: Wochenrhythmus-Diagramm + Legende ziehen von Start hierher um — an die jeweils angezeigte Woche
+  // gebunden (nicht fest an currentWeek), passend zum bestehenden Wochen-Navigator direkt darüber.
+  const weekLoad = plan.reduce((s, d) => s + d.load, 0);
+  const prevWeekLoad = week > 1 ? plannedWeekLoad(week - 1, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides) : null;
 
   return (
     <div className="space-y-4">
@@ -2603,6 +2574,28 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
         <button disabled={week <= 1} onClick={() => setWeek((w) => Math.max(1, w - 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronLeft size={18} /></button>
         <div className="text-center"><div className="font-display font-bold text-slate-900">Woche {week}</div><div className="text-[11px] text-slate-500 font-num">{fmtDM(meta.monday)} – {fmtDM(meta.sunday)}{week === currentWeek ? " · aktuell" : ""}</div></div>
         <button disabled={week >= totalW} onClick={() => setWeek((w) => Math.min(totalW, w + 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronRight size={18} /></button>
+      </Card>
+
+      <Card className="p-4">
+        <Eyebrow>Wochenrhythmus</Eyebrow>
+        <div className="flex items-baseline gap-2 mb-1.5 mt-1.5 flex-wrap">
+          <span className="font-num text-2xl font-bold leading-none text-slate-800">⚡{weekLoad}</span>
+          <span className="text-xs text-slate-400">{week === currentWeek ? "diese Woche geplant" : "geplant"}</span>
+          {prevWeekLoad != null && (
+            <span className={`ml-auto text-xs font-bold font-num ${weekLoad > prevWeekLoad * 1.1 ? "text-amber-600" : weekLoad < prevWeekLoad * 0.9 ? "text-slate-400" : "text-emerald-600"}`}>
+              {weekLoad > prevWeekLoad * 1.1 ? "↑" : weekLoad < prevWeekLoad * 0.9 ? "↓" : "→"} ⚡{prevWeekLoad} Vorwoche geplant
+            </span>
+          )}
+        </div>
+        <WeekRhythm plan={plan} week={week} highlightToday={week === currentWeek} customLog={data.customLog} overrides={data.overrides} runLog={data.runLog} />
+        <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[10px] text-slate-500">
+          {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: MANUAL_SPORT.color }} /> {MANUAL_SPORT.label}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-300" /> Ruhe</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-slate-400" /> Ausgefallen</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#e11d48" }} /> Krank (Einheit)</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed" style={{ borderColor: "#d97706" }} /> Nicht bereit</span>
+        </div>
       </Card>
 
       {/* Phasen-Umschalter nur solange das Turnier noch ansteht */}
@@ -2623,6 +2616,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
         {plan.map((d) => {
           const date = new Date(meta.monday.getTime() + DAYS.indexOf(d.day) * DAY_MS);
           const isToday = week === currentWeek && isSameDay(date, new Date());
+          const isPast = atMidnight(date) < atMidnight(new Date()); // U5: heute zählt bewusst nicht als "vorbei"
           return (
             <Card key={d.day} className="overflow-hidden" style={isToday ? { borderColor: "#6366f1", boxShadow: "0 0 0 1px #6366f1" } : {}}>
               <div className="flex items-center gap-3 px-3.5 pt-3 pb-2">
@@ -2642,6 +2636,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                       onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
                       onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway || excusable || it.excused || replaceable || it.replaced ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
                       isOpen={open === it.uid}
+                      overdue={isPast}
                       extra={<>
                         {it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : null}
                         {it.sport === "run" && !it.replacement && !it.movedAway && !it.excused && !it.replaced ? <GarminExport item={it} week={effW} /> : null}
@@ -4736,6 +4731,13 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides);
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
+  // U8: Trainingsbelastung-Karte (v7.29/M5) zieht von Start hierher um — dieselbe 42-Tage-Ist-Last-
+  // Historie wie zuvor in CockpitTab, hier neu berechnet statt durchgereicht (analog zu readinessStatus).
+  const loadHistory42 = useMemo(
+    () => buildLoadHistory(toLocalISO(new Date()), 42, { done: data.done, customLog: data.customLog, overrides: data.overrides, runLog: data.runLog, vbSlots: data.vbSlots, illnessLog: data.illnessLog, planEndMode: data.planEndMode }),
+    [data.done, data.customLog, data.overrides, data.runLog, data.vbSlots, data.illnessLog, data.planEndMode]
+  );
+  const loadTrend = useMemo(() => loadTrendStatus(loadHistory42), [loadHistory42]);
   const [sleepRange, setSleepRange] = useState("d14"); // Default entspricht dem bisherigen slice(-14)
   const sleepSeries = applyTimeRange(sorted.map((r) => ({ iso: r.date, date: fmtISOshort(r.date), sleep: r.sleep })), sleepRange);
   const tWeek = planWeekOf(TOURNAMENT);
@@ -4794,12 +4796,15 @@ function RecoveryTab({ data, setData, currentWeek }) {
         <Eyebrow color={dark ? status.bright : status.color}>Belastungs-Ampel</Eyebrow>
         <div className="mt-1.5 flex items-center gap-3">
           <div className="h-3 w-3 rounded-full shrink-0" style={{ background: dark ? status.bright : status.color }} />
-          <div className="font-display font-bold flex items-center gap-1.5 flex-wrap" style={{ color: dark ? status.bright : status.color }}>{status.label}{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
+          <div className="font-display font-bold flex items-center gap-1.5 flex-wrap" style={{ color: dark ? status.bright : status.color }}>{status.label}{asOfSuffix(latest?.date)}{status.napBoost && <MiniBadge icon={<Moon size={10} />} text="Nap-Boost" color="#7c3aed" />}</div>
         </div>
         <p className="text-xs mt-1.5 leading-relaxed" style={{ color: dark ? status.bright : status.color }}>{status.hint}</p>
         <div className="mt-2.5 flex gap-2 text-[11px]"><span className="rounded-lg bg-white/70 px-2 py-1 font-num text-slate-700">Geplante Belastung Wo. {currentWeek}: ⚡{weekLoad}</span>{avgSleep && <span className="rounded-lg bg-white/70 px-2 py-1 font-num text-slate-700">Schlaf-Ø {avgSleep.toFixed(1)} h</span>}</div>
         <div className="mt-2"><LoadHelp /></div>
       </Card>
+
+      {/* U8: Trainingsbelastung-Karte von Start hierher umgezogen (M5/v7.29) */}
+      <LoadTrendCard history42={loadHistory42} status={loadTrend} />
 
       <Card className="p-4">
         <Eyebrow>Täglicher Check-in</Eyebrow>
@@ -5437,6 +5442,35 @@ function GarminExport({ item, week }) {
 }
 
 /* ===================== EINSTELLUNGEN ===================== */
+// U8: Prioritäten-Liste von Start hierher umgezogen — inhaltlich unverändert inkl. Erklärsatz.
+function PrioritiesCard({ data, setData }) {
+  const dark = useDark();
+  const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
+  const movePrio = (i, dir) => {
+    const next = [...prios]; const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    setData((d) => ({ ...d, prios: next }));
+  };
+  return (
+    <Card className="p-4">
+      <Eyebrow>Prioritäten</Eyebrow>
+      <div className="text-[11px] text-slate-400 mt-1 mb-2">Steuert, was bei Zeitmangel oder roter Ampel zuerst gestrichen wird — von unten nach oben.</div>
+      <div className="divide-y divide-slate-100">
+        {prios.map((p, i) => (
+          <div key={p} className="flex items-center gap-2.5 py-2">
+            <span className="font-num text-xs font-bold text-slate-300 w-4">{i + 1}</span>
+            <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: softBg(dark, SPORT[p].color, SPORT[p].tint) }}><SportGlyph sport={p} size={15} /></div>
+            <span className="text-sm font-semibold text-slate-700 flex-1">{SPORT[p].label}</span>
+            {i === prios.length - 1 && <span className="text-[10px] text-slate-400 mr-1">wird zuerst gestrichen</span>}
+            <button onClick={() => movePrio(i, -1)} disabled={i === 0} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowUp size={14} /></button>
+            <button onClick={() => movePrio(i, 1)} disabled={i === prios.length - 1} className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center disabled:opacity-30 text-slate-600"><ArrowDown size={14} /></button>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 function ThemeCard({ data, setData }) {
   const theme = data.theme || "auto";
   const opts = [["light", "Hell", Sun], ["dark", "Dunkel", Moon], ["auto", "Auto", MonitorSmartphone]];
@@ -5682,6 +5716,7 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
           <div className="text-[11px] text-slate-500">Darstellung · Trainingszeiten · Daten</div>
         </div>
       </Card>
+      <PrioritiesCard data={data} setData={setData} />
       <ThemeCard data={data} setData={setData} />
       <VBSlotsCard data={data} setData={setData} />
       <PlanEndModeCard data={data} setData={setData} />
@@ -5714,11 +5749,15 @@ function CalRow({ color, label, sub, done, cancelled, big }) {
 }
 function CalLegend() {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
-      {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
-      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: CAL_SCHOOL }} /> Schule</span>
-      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: KLAUSUR_COLOR }} /> Klausur</span>
-    </div>
+    <>
+      <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+        {["run", "vb", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: CAL_SCHOOL }} /> Schule</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full" style={{ background: KLAUSUR_COLOR }} /> Klausur</span>
+      </div>
+      {/* U7: Punkte zeigen den Plan, nicht das Erledigte — ohne Hinweis ließt sich ein voller Tag leicht als "schon gemacht". */}
+      <div className="mt-1 text-[10px] text-slate-400">Punkte zeigen den Plan, nicht was schon erledigt ist.</div>
+    </>
   );
 }
 const CAL_VIEWS = [["monat", "Monat"], ["woche", "Woche"], ["tag", "Tag"]];
@@ -5757,6 +5796,22 @@ function CalendarTab({ data }) {
     }
     return out;
   }, [days, data.vbSlots, data.illnessLog, data.planEndMode, data.overrides, data.schoolLog]);
+  // U7: "Was liegengeblieben ist" — dieselbe offen/vorbei-Bedingung wie U3/U5, hier über die im Monat
+  // sichtbaren vergangenen Tage aggregiert statt nur die aktuelle Plan-Woche. Keine neue Berechnung,
+  // nur eine neue Zusammenstellung aus byDay (das die Kacheln/Punkte ohnehin schon nutzen).
+  const missedItems = useMemo(() => {
+    if (view !== "monat") return [];
+    const out = [];
+    for (const d of days) {
+      const iso = toLocalISO(d);
+      if (iso >= todayIso) continue;
+      const e = byDay[iso];
+      if (!e) continue;
+      if (filter.training) e.items.forEach((it) => { if (it.load > 0 && !it.cancelled && !it.excused && !it.replaced && !data.done[it.uid]) out.push({ key: `t-${it.uid}`, date: iso, label: it.label, color: SPORT[it.sport].color }); });
+      if (filter.schule) e.school.forEach((s) => { if (!s.erledigt) out.push({ key: `s-${s.id}`, date: iso, label: s.titel, color: s.art === "klausur" ? KLAUSUR_COLOR : CAL_SCHOOL }); });
+    }
+    return out.sort((a, b) => b.date.localeCompare(a.date));
+  }, [view, days, byDay, filter, data.done]);
   const nav = (f) => setAnchor((a) => (view === "monat" ? new Date(a.getFullYear(), a.getMonth() + f, 1) : new Date(atMidnight(a).getTime() + f * (view === "woche" ? 7 : 1) * DAY_MS)));
   const title = view === "monat" ? anchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" })
     : view === "woche" ? `Woche ab ${fmtDM(mondayOf(anchor))}`
@@ -5829,6 +5884,21 @@ function CalendarTab({ data }) {
             })}
           </div>
           <CalLegend />
+          {missedItems.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-100">
+              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">Liegengeblieben ({missedItems.length})</div>
+              <div className="space-y-1.5">
+                {missedItems.slice(0, 8).map((m) => (
+                  <div key={m.key} className="flex items-center gap-2 text-xs">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ background: m.color }} />
+                    <span className="text-slate-700 truncate flex-1">{m.label}</span>
+                    <span className="text-[10px] text-slate-400 font-num shrink-0">{fmtISOshort(m.date)}</span>
+                  </div>
+                ))}
+                {missedItems.length > 8 && <div className="text-[10.5px] text-slate-400">+{missedItems.length - 8} weitere</div>}
+              </div>
+            </div>
+          )}
         </Card>
       )}
 
@@ -5875,17 +5945,28 @@ function CalendarTab({ data }) {
 const BOTTOM_TABS = [
   { id: "cockpit", label: "Start", icon: Gauge, screen: "cockpit" },
   { id: "woche", label: "Woche", icon: CalendarDays, screen: "woche" },
-  { id: "add", label: "", icon: Plus, action: "quickAdd" },
+  { id: "add", label: "Neu", icon: Plus, action: "quickAdd" },
   { id: "kalender", label: "Kalender", icon: Calendar, screen: "kalender" },
   { id: "mehr", label: "Mehr", icon: MoreHorizontal, screen: "mehr" },
 ];
 // Sekundäre Ziele, gebündelt hinter "Mehr" (ersetzt den Zahnrad-Button im Header — Einstellungen
 // ist jetzt einfach der letzte Eintrag hier statt eines eigenen Overlay-Flags).
+// U16: optionales "hint(data)" je Eintrag liefert ein einzelnes Hinweis-Wort statt eines Zahlen-Badges,
+// wenn dort gerade etwas offen ist — nur wo tatsächlich verdrahtet (aktuell Schule, s. U2).
 const MEHR_ITEMS = [
   { id: "kcal", label: "Kcal", icon: Utensils, screen: "kcal" },
   { id: "fortschritt", label: "Fortschritt", icon: TrendingUp, screen: "fortschritt" },
   { id: "recovery", label: "Recovery", icon: Moon, screen: "recovery" },
-  { id: "schule", label: "Schule", icon: GraduationCap, screen: "schule" },
+  // U2: Hinweis-Wort statt der bisher pauschal alarmierenden Gesamtzahl — nur "fällig"/"überfällig"
+  // sagt, ob heute wirklich etwas ansteht; ohne offene Fälligkeit heute bleibt der Eintrag unauffällig.
+  { id: "schule", label: "Schule", icon: GraduationCap, screen: "schule", hint: (data) => {
+      const open = (data.schoolLog || []).filter((s) => !s.erledigt);
+      if (!open.length) return null;
+      if (open.some((s) => daysUntil(s.faelligkeit) < 0)) return "Überfällig";
+      if (open.some((s) => daysUntil(s.faelligkeit) === 0)) return "Fällig";
+      return null;
+    } },
+  { id: "rueckblick", label: "Rückblick & Fortschritt", icon: Trophy, screen: "rueckblick" },
   { id: "settings", label: "Einstellungen", icon: Settings, screen: "settings" },
 ];
 // Schnelleintrag: reiner Launcher zu den bestehenden, längst vorhandenen Formularen (Fortschritt/Kcal/
@@ -5906,8 +5987,9 @@ function BottomTabBar({ screen, setScreen, onQuickAdd }) {
           const Icon = t.icon;
           if (t.action === "quickAdd") {
             return (
-              <button key={t.id} onClick={onQuickAdd} aria-label="Schnelleintrag" className="h-12 w-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg -mt-6 shrink-0">
-                <Icon size={22} />
+              <button key={t.id} onClick={onQuickAdd} aria-label="Schnelleintrag" className="flex flex-col items-center gap-0.5 min-w-[44px] py-1 shrink-0">
+                <span className="h-12 w-12 rounded-full bg-indigo-600 text-white flex items-center justify-center shadow-lg -mt-6"><Icon size={22} /></span>
+                <span className="text-[10px] font-semibold text-indigo-600">{t.label}</span>
               </button>
             );
           }
@@ -5923,15 +6005,18 @@ function BottomTabBar({ screen, setScreen, onQuickAdd }) {
     </nav>
   );
 }
-function MehrTab({ setScreen }) {
+function MehrTab({ setScreen, data }) {
   return (
     <Card className="p-0 overflow-hidden">
       {MEHR_ITEMS.map((it, i) => {
         const Icon = it.icon;
+        const hint = it.hint ? it.hint(data) : null;
         return (
           <button key={it.id} onClick={() => setScreen(it.screen)} className={`w-full flex items-center gap-3 p-4 text-left ${i > 0 ? "border-t border-slate-200/80" : ""}`}>
             <div className="h-9 w-9 rounded-lg bg-slate-100 flex items-center justify-center shrink-0"><Icon size={17} className="text-slate-500" /></div>
             <span className="flex-1 font-semibold text-sm text-slate-800">{it.label}</span>
+            {/* U16: Hinweis-Wort statt Zahlen-Badge, nur wenn dort tatsächlich etwas offen ist */}
+            {hint && <span className="text-[11px] font-semibold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5 shrink-0">{hint}</span>}
             <ChevronRight size={16} className="text-slate-300" />
           </button>
         );
@@ -6134,7 +6219,9 @@ export default function App() {
           ) : screen === "schule" ? (
             <SchoolTab data={data} setData={setData} />
           ) : screen === "mehr" ? (
-            <MehrTab setScreen={goScreen} />
+            <MehrTab setScreen={goScreen} data={data} />
+          ) : screen === "rueckblick" ? (
+            <RueckblickTab data={data} currentWeek={currentWeek} plan={plan} badges={badges} streak={streak} daysToT={daysToT} phaseNow={phaseNow} tournamentPassed={tournamentPassed} onClose={() => goScreen("mehr")} />
           ) : screen === "woche" ? (
             <WeekTab data={data} setData={setData} currentWeek={currentWeek} tournamentPassed={tournamentPassed} />
           ) : screen === "fortschritt" ? (
@@ -6144,11 +6231,11 @@ export default function App() {
           ) : screen === "recovery" ? (
             <RecoveryTab data={data} setData={setData} currentWeek={currentWeek} />
           ) : (
-            <CockpitTab data={data} setData={setData} currentWeek={currentWeek} daysToT={daysToT} phaseNow={phaseNow} plan={plan} badges={badges} streak={streak} goWeek={() => goScreen("woche")} goRecovery={() => goScreen("recovery")} goKcal={() => goScreen("kcal")} goSchule={() => goScreen("schule")} tournamentPassed={tournamentPassed} />
+            <CockpitTab data={data} setData={setData} currentWeek={currentWeek} plan={plan} streak={streak} goWeek={() => goScreen("woche")} goRecovery={() => goScreen("recovery")} goRueckblick={() => goScreen("rueckblick")} />
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.31` : "Fortschritt wird automatisch gespeichert · v7.31"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.32` : "Fortschritt wird automatisch gespeichert · v7.32"}</span>
           </footer>
         </main>
       </div>
